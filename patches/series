@@ -1,2 +1,3 @@
 0001-vendored-build-openssl.patch
 0002-archive-submodules.patch
+0003-legacy-notifications.patch

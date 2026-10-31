@@ -1,0 +1,455 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -258,7 +258,7 @@
+ wezterm-ssh = { path = "wezterm-ssh" }
+ wezterm-surface = { path = "wezterm-surface" }
+ wezterm-term = { path = "term" }
+-wezterm-toast-notification = { path = "wezterm-toast-notification" }
++wezterm-toast-notification = { path = "wezterm-toast-notification", default-features = false, features = ["legacy-macos"] }
+ wezterm-uds = { path = "wezterm-uds" }
+ wezterm-version = { path = "wezterm-version" }
+ wgpu = "25.0.2"
+--- a/wezterm-toast-notification/Cargo.toml
++++ b/wezterm-toast-notification/Cargo.toml
+@@ -8,6 +8,11 @@
+ 
+ # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+ 
++[features]
++default = ["modern-macos"]
++modern-macos = ["dep:objc2-user-notifications"]
++legacy-macos = []
++
+ [dependencies]
+ log.workspace = true
+ wezterm-open-url.workspace = true
+@@ -22,7 +27,7 @@
+ [target.'cfg(target_os="macos")'.dependencies]
+ block2.workspace = true
+ objc2.workspace = true
+-objc2-user-notifications.workspace = true
++objc2-user-notifications = { workspace = true, optional = true }
+ objc2-foundation.workspace = true
+ uuid = { workspace=true, features=["v4", "fast-rng"] }
+ 
+--- a/wezterm-toast-notification/build.rs
++++ b/wezterm-toast-notification/build.rs
+@@ -1,5 +1,5 @@
+ fn main() {
+-    if cfg!(target_os = "macos") {
++    if cfg!(target_os = "macos") && !cfg!(feature = "legacy-macos") {
+         println!("cargo:rustc-link-lib=framework=UserNotifications");
+     }
+ }
+--- a/wezterm-toast-notification/src/lib.rs
++++ b/wezterm-toast-notification/src/lib.rs
+@@ -1,4 +1,8 @@
+ mod dbus;
++#[cfg(not(feature = "legacy-macos"))]
++mod macos;
++#[cfg(feature = "legacy-macos")]
++#[path = "macos_legacy.rs"]
+ mod macos;
+ mod windows;
+ 
+--- /dev/null
++++ b/wezterm-toast-notification/src/macos_legacy.rs
+@@ -0,0 +1,277 @@
++#![cfg(target_os = "macos")]
++#![allow(deprecated)]
++use crate::ToastNotification;
++use block2::RcBlock;
++use objc2::rc::Retained;
++use objc2::runtime::{AnyClass, AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
++use objc2::{define_class, msg_send, sel, AllocAnyThread};
++use objc2_foundation::{
++    ns_string, NSDictionary, NSOperationQueue, NSPropertyListFormat, NSPropertyListSerialization,
++    NSString, NSThread, NSUserNotification, NSUserNotificationCenter,
++    NSUserNotificationCenterDelegate, NSUserNotificationDefaultSoundName,
++};
++use std::collections::{HashMap, HashSet};
++use std::sync::atomic::{AtomicPtr, Ordering};
++use std::sync::{LazyLock, Mutex, Once};
++
++type Error = Box<dyn std::error::Error>;
++
++fn notification_id(notification: &NSUserNotification) -> String {
++    notification
++        .identifier()
++        .map(|id| id.to_string())
++        .unwrap_or_default()
++}
++
++#[derive(Default)]
++struct Book {
++    pending: HashMap<String, bool>,
++}
++
++impl Book {
++    fn track(&mut self, notification: &NSUserNotification) {
++        self.pending.insert(notification_id(notification), false);
++    }
++
++    fn delivered(&mut self, notification: &NSUserNotification) {
++        if let Some(delivered) = self.pending.get_mut(&notification_id(notification)) {
++            *delivered = true;
++        }
++    }
++
++    fn purge_dismissed(&mut self, live: &HashSet<String>) {
++        self.pending
++            .retain(|id, delivered| !*delivered || live.contains(id));
++    }
++
++    fn delivery_failed(&mut self, notification: &NSUserNotification) -> bool {
++        let id = notification_id(notification);
++        if self.pending.get(&id) == Some(&false) {
++            self.pending.remove(&id);
++            true
++        } else {
++            false
++        }
++    }
++}
++
++static BOOK: LazyLock<Mutex<Book>> = LazyLock::new(|| Mutex::new(Book::default()));
++
++fn activate_with(notification: &NSUserNotification, book: &Mutex<Book>, open: impl FnOnce(&str)) {
++    if book
++        .lock()
++        .unwrap()
++        .pending
++        .remove(&notification_id(notification))
++        .is_none()
++    {
++        return;
++    }
++    if let Some(info) = notification.userInfo() {
++        if let Some(url) = info.objectForKey(ns_string!("url")) {
++            if let Some(url) = url.downcast_ref::<NSString>() {
++                open(&url.to_string());
++            }
++        }
++    }
++}
++
++fn expire_with(
++    notification: &NSUserNotification,
++    book: &Mutex<Book>,
++    remove: impl FnOnce(&NSUserNotification),
++) {
++    if book
++        .lock()
++        .unwrap()
++        .pending
++        .remove(&notification_id(notification))
++        .is_some()
++    {
++        remove(notification);
++    }
++}
++
++fn notification_center(
++    class: Option<&AnyClass>,
++) -> Result<Retained<NSUserNotificationCenter>, Error> {
++    let class = class.ok_or("NSUserNotificationCenter unavailable on this system")?;
++    let available: bool =
++        unsafe { msg_send![class, respondsToSelector: sel!(defaultUserNotificationCenter)] };
++    if !available {
++        return Err("native notification delivery API unavailable".into());
++    }
++    let center: Option<Retained<NSUserNotificationCenter>> =
++        unsafe { msg_send![class, defaultUserNotificationCenter] };
++    center.ok_or_else(|| {
++        "native notification center unavailable; check the app bundle and user session".into()
++    })
++}
++
++fn center() -> Result<Retained<NSUserNotificationCenter>, Error> {
++    notification_center(AnyClass::get(
++        std::ffi::CStr::from_bytes_with_nul(b"NSUserNotificationCenter\0").unwrap(),
++    ))
++}
++
++fn make_notification(toast: &ToastNotification) -> Result<Retained<NSUserNotification>, Error> {
++    AnyClass::get(std::ffi::CStr::from_bytes_with_nul(b"NSUserNotification\0").unwrap())
++        .ok_or("NSUserNotification unavailable on this system")?;
++    let notification = NSUserNotification::new();
++    notification.setIdentifier(Some(&NSString::from_str(&uuid::Uuid::new_v4().to_string())));
++    notification.setTitle(Some(&NSString::from_str(&toast.title)));
++    notification.setInformativeText(Some(&NSString::from_str(&toast.message)));
++    notification.setSoundName(Some(unsafe { NSUserNotificationDefaultSoundName }));
++    if let Some(url) = &toast.url {
++        let url = NSString::from_str(url);
++        let info = NSDictionary::<NSString, AnyObject>::from_slices(&[ns_string!("url")], &[&url]);
++        let data = unsafe {
++            NSPropertyListSerialization::dataWithPropertyList_format_options_error(
++                &info,
++                NSPropertyListFormat::BinaryFormat_v1_0,
++                0,
++            )
++        }
++        .map_err(|error| format!("cannot encode notification userInfo: {error:?}"))?;
++        if data.length() >= 1024 {
++            return Err("notification userInfo exceeds the Mavericks native 1 KiB limit".into());
++        }
++        unsafe {
++            notification.setUserInfo(Some(&info));
++        }
++        notification.setHasActionButton(true);
++        notification.setActionButtonTitle(ns_string!("Show"));
++    }
++    Ok(notification)
++}
++
++define_class!(
++    #[unsafe(super = NSObject)]
++    #[name = "WezTermLegacyNotifDelegate"]
++    #[derive(Debug)]
++    struct Delegate;
++
++    unsafe impl NSObjectProtocol for Delegate {}
++
++    unsafe impl NSUserNotificationCenterDelegate for Delegate {
++        #[unsafe(method(userNotificationCenter:shouldPresentNotification:))]
++        fn should_present(&self, _center: &NSUserNotificationCenter, _notification: &NSUserNotification) -> bool {
++            true
++        }
++
++        #[unsafe(method(userNotificationCenter:didDeliverNotification:))]
++        fn did_deliver(&self, _center: &NSUserNotificationCenter, notification: &NSUserNotification) {
++            BOOK.lock().unwrap().delivered(notification);
++        }
++
++        #[unsafe(method(userNotificationCenter:didActivateNotification:))]
++        fn did_activate(&self, center: &NSUserNotificationCenter, notification: &NSUserNotification) {
++            activate_with(notification, &BOOK, wezterm_open_url::open_url);
++            center.removeDeliveredNotification(notification);
++        }
++    }
++
++    impl Delegate {
++        #[unsafe(method(expireNotification:))]
++        fn expire(&self, notification: &NSUserNotification) {
++            match center() {
++                Ok(center) => expire_with(notification, &BOOK, |notification| center.removeDeliveredNotification(notification)),
++                Err(error) => log::error!("cannot expire notification: {error}"),
++            }
++        }
++
++        #[unsafe(method(checkDelivery:))]
++        fn check_delivery(&self, notification: &NSUserNotification) {
++            match center() {
++                Ok(center) => {
++                    let id = notification_id(notification);
++                    if center.deliveredNotifications().iter().any(|item| notification_id(&item) == id) {
++                        BOOK.lock().unwrap().delivered(notification);
++                    }
++                    if BOOK.lock().unwrap().delivery_failed(notification) {
++                        log::error!("native notification {id} was not delivered; check app identity, signing and user session");
++                    }
++                }
++                Err(error) => log::error!("cannot check notification delivery: {error}"),
++            }
++        }
++    }
++);
++
++fn retained_delegate() -> Retained<Delegate> {
++    static INIT: Once = Once::new();
++    static DELEGATE: AtomicPtr<Delegate> = AtomicPtr::new(std::ptr::null_mut());
++    INIT.call_once(|| {
++        let allocated = Delegate::alloc().set_ivars(());
++        let delegate: Retained<Delegate> = unsafe { msg_send![super(allocated), init] };
++        DELEGATE.store(Retained::into_raw(delegate), Ordering::Release);
++    });
++    unsafe { Retained::retain(DELEGATE.load(Ordering::Acquire)).unwrap() }
++}
++
++fn initialize_on_main() -> Result<Retained<NSUserNotificationCenter>, Error> {
++    let center = center()?;
++    let delegate = retained_delegate();
++    unsafe {
++        center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
++    }
++    Ok(center)
++}
++
++pub fn initialize() {
++    if NSThread::isMainThread_class() {
++        if let Err(error) = initialize_on_main() {
++            log::error!("cannot initialize native notifications: {error}");
++        }
++    } else {
++        let operation = RcBlock::new(initialize);
++        unsafe {
++            NSOperationQueue::mainQueue().addOperationWithBlock(&operation);
++        }
++    }
++}
++
++fn show_on_main(toast: ToastNotification) -> Result<(), Error> {
++    let center = initialize_on_main()?;
++    let notification = make_notification(&toast)?;
++    let live = center
++        .deliveredNotifications()
++        .iter()
++        .map(|item| notification_id(&item))
++        .collect();
++    {
++        let mut book = BOOK.lock().unwrap();
++        book.purge_dismissed(&live);
++        book.track(&notification);
++    }
++    center.deliverNotification(&notification);
++    let delegate = retained_delegate();
++    unsafe {
++        let _: () = msg_send![&*delegate, performSelector: sel!(checkDelivery:) withObject: &*notification afterDelay: 5.0f64];
++        if let Some(timeout) = toast.timeout {
++            let _: () = msg_send![&*delegate, performSelector: sel!(expireNotification:) withObject: &*notification afterDelay: timeout.as_secs_f64()];
++        }
++    }
++    Ok(())
++}
++
++pub fn show_notif(toast: ToastNotification) -> Result<(), Error> {
++    if NSThread::isMainThread_class() {
++        show_on_main(toast)
++    } else {
++        let operation = RcBlock::new(move || {
++            if let Err(error) = show_on_main(toast.clone()) {
++                log::error!("native notification delivery failed: {error}");
++            }
++        });
++        unsafe {
++            NSOperationQueue::mainQueue().addOperationWithBlock(&operation);
++        }
++        Ok(())
++    }
++}
++
++#[cfg(test)]
++mod legacy_tests {
++    include!("macos_legacy_tests.rs");
++}
+--- /dev/null
++++ b/wezterm-toast-notification/src/macos_legacy_tests.rs
+@@ -0,0 +1,118 @@
++use super::*;
++use objc2::rc::Weak;
++
++fn toast(url: Option<&str>) -> ToastNotification {
++    ToastNotification {
++        title: "Mavericks title".into(),
++        message: "Native body — café".into(),
++        url: url.map(str::to_string),
++        timeout: Some(std::time::Duration::from_secs(3)),
++    }
++}
++
++#[test]
++fn title_and_body_reach_native_notification() {
++    let notification = make_notification(&toast(Some("https://example.invalid/test"))).unwrap();
++    assert_eq!(notification.title().unwrap().to_string(), "Mavericks title");
++    assert_eq!(
++        notification.informativeText().unwrap().to_string(),
++        "Native body — café"
++    );
++    assert!(notification.hasActionButton());
++    let info = notification.userInfo().unwrap();
++    let url = info.objectForKey(ns_string!("url")).unwrap();
++    assert_eq!(
++        url.downcast_ref::<NSString>().unwrap().to_string(),
++        "https://example.invalid/test"
++    );
++}
++
++#[test]
++fn url_click_opens_the_configured_url_once() {
++    let notification = make_notification(&toast(Some("https://example.invalid/click"))).unwrap();
++    let book = Mutex::new(Book::default());
++    book.lock().unwrap().track(&notification);
++    let mut opened = Vec::new();
++    for _ in 0..2 {
++        activate_with(&notification, &book, |url| opened.push(url.to_string()));
++    }
++    assert_eq!(opened, vec!["https://example.invalid/click"]);
++}
++
++#[test]
++fn timeout_removes_only_its_own_notification() {
++    let first = make_notification(&toast(None)).unwrap();
++    let second = make_notification(&toast(None)).unwrap();
++    let book = Mutex::new(Book::default());
++    book.lock().unwrap().track(&first);
++    book.lock().unwrap().track(&second);
++    let mut removed = Vec::new();
++    expire_with(&first, &book, |n| {
++        assert!(
++            book.try_lock().is_ok(),
++            "native removal may reenter; do not hold our state lock"
++        );
++        removed.push(notification_id(n));
++    });
++    expire_with(&first, &book, |n| removed.push(notification_id(n)));
++    assert_eq!(removed, vec![notification_id(&first)]);
++    assert!(book
++        .lock()
++        .unwrap()
++        .pending
++        .contains_key(&notification_id(&second)));
++}
++
++#[test]
++fn dismissed_delivered_notifications_do_not_accumulate_in_the_book() {
++    let delivered = make_notification(&toast(None)).unwrap();
++    let awaiting = make_notification(&toast(None)).unwrap();
++    let mut book = Book::default();
++    book.track(&delivered);
++    book.delivered(&delivered);
++    book.track(&awaiting);
++    book.purge_dismissed(&std::collections::HashSet::new());
++    assert!(!book.pending.contains_key(&notification_id(&delivered)));
++    assert!(book.pending.contains_key(&notification_id(&awaiting)));
++}
++
++#[test]
++fn missing_native_delivery_api_is_reported() {
++    let error = notification_center(None).unwrap_err().to_string();
++    assert!(error.contains("unavailable"), "{}", error);
++}
++
++#[test]
++fn undelivered_request_is_reported_but_delivered_request_is_not() {
++    let first = make_notification(&toast(None)).unwrap();
++    let second = make_notification(&toast(None)).unwrap();
++    let mut book = Book::default();
++    book.track(&first);
++    book.track(&second);
++    book.delivered(&second);
++    assert!(book.delivery_failed(&first));
++    assert!(!book.delivery_failed(&first));
++    assert!(!book.delivery_failed(&second));
++}
++
++#[test]
++fn oversized_native_user_info_is_an_explicit_error() {
++    let url = "x".repeat(4096);
++    let error = make_notification(&toast(Some(&url)))
++        .unwrap_err()
++        .to_string();
++    assert!(error.contains("userInfo"), "{}", error);
++}
++
++#[test]
++fn delegate_remains_alive_after_initialization_local_is_dropped() {
++    let delegate = retained_delegate();
++    let weak = Weak::from_retained(&delegate);
++    let pointer = Retained::as_ptr(&delegate);
++    drop(delegate);
++    let alive = weak
++        .load()
++        .expect("notification center does not retain its delegate; our owner must");
++    assert_eq!(Retained::as_ptr(&alive), pointer);
++    assert_eq!(Retained::as_ptr(&retained_delegate()), pointer);
++}
