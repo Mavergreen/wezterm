@@ -1,0 +1,10 @@
+--- a/wezterm-version/Cargo.toml
++++ b/wezterm-version/Cargo.toml
+@@ -8,6 +8,6 @@
+ # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+ 
+ [build-dependencies]
+-git2 = { workspace=true, default-features = false }
++git2 = { workspace=true, default-features = false, features = ["vendored-openssl"] }
+ 
+ [dependencies]

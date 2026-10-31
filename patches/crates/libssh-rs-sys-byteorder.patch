@@ -1,0 +1,13 @@
+--- a/build.rs
++++ b/build.rs
+@@ -107,10 +107,6 @@
+     if target.contains("linux") {
+         cfg.define("HAVE_STRNDUP", Some("1"));
+     }
+-    if target.contains("darwin") {
+-        cfg.define("HAVE_NTOHLL", Some("1"));
+-        cfg.define("HAVE_HTONLL", Some("1"));
+-    }
+ 
+     if target.contains("android") {
+         cfg.define("_BSD_SOURCE", None);

@@ -1,0 +1,50 @@
+--- a/deps/freetype/build.rs
++++ b/deps/freetype/build.rs
+@@ -13,3 +13,4 @@
+-    if !Path::new("zlib/.git").exists() {
+-        git_submodule_update();
+-    }
++    assert!(
++        Path::new("zlib/adler32.c").is_file(),
++        "missing zlib sources; prepare the pinned source archives"
++    );
+@@ -50,3 +51,4 @@
+-    if !Path::new("libpng/.git").exists() {
+-        git_submodule_update();
+-    }
++    assert!(
++        Path::new("libpng/png.c").is_file(),
++        "missing libpng sources; prepare the pinned source archives"
++    );
+@@ -113,3 +115,4 @@
+-    if !Path::new("freetype2/.git").exists() {
+-        git_submodule_update();
+-    }
++    assert!(
++        Path::new("freetype2/src/base/ftbase.c").is_file(),
++        "missing freetype sources; prepare the pinned source archives"
++    );
+@@ -234,6 +237,0 @@
+-fn git_submodule_update() {
+-    let _ = std::process::Command::new("git")
+-        .args(&["submodule", "update", "--init"])
+-        .status();
+-}
+-
+--- a/deps/harfbuzz/build.rs
++++ b/deps/harfbuzz/build.rs
+@@ -7,3 +7,4 @@
+-    if !Path::new("harfbuzz/.git").exists() {
+-        git_submodule_update();
+-    }
++    assert!(
++        Path::new("harfbuzz/src/harfbuzz.cc").is_file(),
++        "missing harfbuzz sources; prepare the pinned source archives"
++    );
+@@ -61,6 +62,0 @@
+-fn git_submodule_update() {
+-    let _ = std::process::Command::new("git")
+-        .args(&["submodule", "update", "--init"])
+-        .status();
+-}
+-
