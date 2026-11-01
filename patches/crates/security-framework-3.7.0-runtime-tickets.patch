@@ -1,0 +1,79 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -43,6 +43,7 @@
+ pub mod policy;
+ pub mod random;
+ pub mod secure_transport;
++mod session_tickets;
+ pub mod trust;
+ #[cfg(target_os = "macos")]
+ pub mod trust_settings;
+--- a/src/secure_transport.rs
++++ b/src/secure_transport.rs
+@@ -719,7 +719,13 @@
+     ///
+     /// [`SslContext::set_peer_id`]: #method.set_peer_id
+     pub fn set_session_tickets_enabled(&mut self, enabled: bool) -> Result<()> {
+-        unsafe { cvt(SSLSetSessionTicketsEnabled(self.0, Boolean::from(enabled))) }
++        unsafe {
++            cvt(crate::session_tickets::set_with(
++                self.0,
++                Boolean::from(enabled),
++                crate::session_tickets::resolve(),
++            ))
++        }
+     }
+ 
+     /// Returns the number of bytes which can be read without triggering a
+--- /dev/null
++++ b/src/session_tickets.rs
+@@ -0,0 +1,49 @@
++use core_foundation_sys::base::{Boolean, OSStatus};
++use security_framework_sys::base::errSecUnimplemented;
++use security_framework_sys::secure_transport::SSLContextRef;
++use std::sync::OnceLock;
++
++pub(crate) type SessionTicketsFn = unsafe extern "C" fn(SSLContextRef, Boolean) -> OSStatus;
++
++pub(crate) fn resolve_with(
++    cache: &OnceLock<Option<SessionTicketsFn>>,
++    load: impl FnOnce() -> Option<SessionTicketsFn>,
++) -> Option<SessionTicketsFn> {
++    *cache.get_or_init(load)
++}
++
++pub(crate) fn resolve() -> Option<SessionTicketsFn> {
++    static FUNCTION: OnceLock<Option<SessionTicketsFn>> = OnceLock::new();
++    resolve_with(&FUNCTION, || unsafe {
++        // Keep this reference for process lifetime so the cached function cannot be unloaded.
++        let framework = libc::dlopen(
++            b"/System/Library/Frameworks/Security.framework/Security\0"
++                .as_ptr()
++                .cast(),
++            libc::RTLD_LAZY | libc::RTLD_LOCAL | libc::RTLD_FIRST,
++        );
++        if framework.is_null() {
++            return None;
++        }
++        let symbol = libc::dlsym(framework, b"SSLSetSessionTicketsEnabled\0".as_ptr().cast());
++        if symbol.is_null() {
++            None
++        } else {
++            // This is the genuine framework symbol, with its exact declared C ABI.
++            Some(std::mem::transmute::<*mut libc::c_void, SessionTicketsFn>(
++                symbol,
++            ))
++        }
++    })
++}
++
++pub(crate) unsafe fn set_with(
++    context: SSLContextRef,
++    enabled: Boolean,
++    function: Option<SessionTicketsFn>,
++) -> OSStatus {
++    match function {
++        Some(function) => unsafe { function(context, enabled) },
++        None => errSecUnimplemented,
++    }
++}
