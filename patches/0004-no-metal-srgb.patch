@@ -1,0 +1,243 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -154,7 +154,7 @@
+ num-traits = {version="0.2", default-features=false }
+ objc = "0.2"
+ objc2 = "0.6"
+-objc2-core-graphics = "0.3"
++objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGColor", "CGColorSpace"] }
+ objc2-foundation = "0.3"
+ objc2-user-notifications = "0.3"
+ openssl = "0.10.57"
+@@ -261,7 +261,7 @@
+ wezterm-toast-notification = { path = "wezterm-toast-notification", default-features = false, features = ["legacy-macos"] }
+ wezterm-uds = { path = "wezterm-uds" }
+ wezterm-version = { path = "wezterm-version" }
+-wgpu = "25.0.2"
++wgpu = { version = "25.0.2", default-features = false, features = ["wgsl"] }
+ whoami = "1.5"
+ winapi = "0.3.9"
+ window = {path="window"}
+--- a/wezterm-gui/Cargo.toml
++++ b/wezterm-gui/Cargo.toml
+@@ -10,6 +10,8 @@
+ # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+ 
+ [features]
++# Preserve upstream's optional lock graph; this product must not enable this feature.
++upstream-render-dependencies = ["wgpu/default", "window/upstream-graphics-dependencies"]
+ default = ["vendored-fonts", "wayland"]
+ wayland = ["window/wayland"]
+ distro-defaults = ["config/distro-defaults"]
+--- a/window/Cargo.toml
++++ b/window/Cargo.toml
+@@ -15,6 +15,8 @@
+ gl_generator.workspace = true
+ 
+ [features]
++# Keep upstream optional identities locked without compiling Metal in this product.
++upstream-graphics-dependencies = ["objc2-core-graphics/default"]
+ wayland = ["wayland-client", "smithay-client-toolkit", "wayland-egl", "wayland-protocols", "wayland-backend", "wayland-protocols-plasma"]
+ 
+ [dependencies]
+@@ -96,5 +98,6 @@
+ core-graphics.workspace = true
+ objc.workspace = true
+ objc2-core-graphics.workspace = true
++objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
+ plist.workspace = true
+ shlex.workspace = true
+--- a/window/src/os/macos/mod.rs
++++ b/window/src/os/macos/mod.rs
+@@ -14,6 +14,7 @@
+ pub mod window;
+ 
+ mod keycodes;
++mod mavericks_compat;
+ 
+ pub use self::window::*;
+ pub use bitmap::*;
+--- a/window/src/os/macos/window.rs
++++ b/window/src/os/macos/window.rs
+@@ -1202,12 +1202,18 @@
+                 }
+ 
+                 // We need to make sure to convert the config color into an sRGB CGColor or the color will be slightly off
+-                let srgb_cgcolor = objc2_core_graphics::CGColor::new_srgb(
++                let srgb_cgcolor = match super::mavericks_compat::create_srgb_color([
+                     color.0.into(),
+                     color.1.into(),
+                     color.2.into(),
+                     color.3.into(),
+-                );
++                ]) {
++                    Ok(color) => color,
++                    Err(error) => {
++                        log::error!("failed to create titlebar sRGB color: {error:#}");
++                        return;
++                    }
++                };
+ 
+                 let _: () = msg_send![layer, setBackgroundColor: srgb_cgcolor];
+             } else {
+--- a/wezterm-gui/src/termwindow/mod.rs
++++ b/wezterm-gui/src/termwindow/mod.rs
+@@ -84,6 +84,7 @@
+ mod selection;
+ pub mod spawn;
+ pub mod webgpu;
++pub(crate) mod render_compat;
+ use crate::spawn::SpawnWhere;
+ use prevcursor::PrevCursorPos;
+ 
+@@ -588,6 +589,7 @@
+ impl TermWindow {
+     pub async fn new_window(mux_window_id: MuxWindowId) -> anyhow::Result<()> {
+         let config = configuration();
++        render_compat::ensure_front_end_supported(config.front_end)?;
+         let dpi = config.dpi.unwrap_or_else(|| ::window::default_dpi()) as usize;
+         let fontconfig = Rc::new(FontConfiguration::new(Some(config.clone()), dpi)?);
+ 
+--- a/wezterm-gui/src/termwindow/webgpu.rs
++++ b/wezterm-gui/src/termwindow/webgpu.rs
+@@ -223,6 +223,7 @@
+         dimensions: Dimensions,
+         config: &ConfigHandle,
+     ) -> anyhow::Result<Self> {
++        super::render_compat::ensure_front_end_supported(config::FrontEndSelection::WebGpu)?;
+         let backends = wgpu::Backends::all();
+         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+             backends,
+--- a/wezterm-gui/src/scripting/mod.rs
++++ b/wezterm-gui/src/scripting/mod.rs
+@@ -81,6 +81,8 @@
+     window_mod.set(
+         "enumerate_gpus",
+         lua.create_function(|_, _: ()| {
++            crate::termwindow::render_compat::ensure_front_end_supported(config::FrontEndSelection::WebGpu)
++                .map_err(mlua::Error::external)?;
+             let backends = wgpu::Backends::all();
+             let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+                 backends,
+--- /dev/null
++++ b/window/src/os/macos/mavericks_compat.rs
+@@ -0,0 +1,15 @@
++use objc2_core_foundation::{CFRetained, CGFloat};
++use objc2_core_graphics::{kCGColorSpaceSRGB, CGColor, CGColorSpace};
++
++pub(super) fn create_srgb_color(components: [CGFloat; 4]) -> anyhow::Result<CFRetained<CGColor>> {
++    let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))
++        .ok_or_else(|| anyhow::anyhow!("unable to create the named sRGB color space"))?;
++    // The named RGB space requires exactly four live CGFloat values, including alpha.
++    unsafe { CGColor::new(Some(&space), components.as_ptr()) }
++        .ok_or_else(|| anyhow::anyhow!("unable to allocate the sRGB color"))
++}
++
++#[cfg(test)]
++mod tests {
++    include!("mavericks_compat_tests.rs");
++}
+--- /dev/null
++++ b/window/src/os/macos/mavericks_compat_tests.rs
+@@ -0,0 +1,58 @@
++use super::*;
++use core_foundation::base::CFEqual;
++
++#[link(name = "QuartzCore", kind = "framework")]
++extern "C" {
++    fn CACurrentMediaTime() -> f64;
++}
++
++#[test]
++fn srgb_color_preserves_space_components_alpha() {
++    for components in [
++        [0., 0., 0., 0.],
++        [1., 1., 1., 1.],
++        [0.125, 0.375, 0.625, 0.875],
++    ] {
++        let color = create_srgb_color(components).unwrap();
++        let actual_space = CGColor::color_space(Some(&color)).unwrap();
++        let expected_space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB })).unwrap();
++        assert!(
++            unsafe {
++                CFEqual(
++                    (&*actual_space as *const CGColorSpace).cast(),
++                    (&*expected_space as *const CGColorSpace).cast(),
++                )
++            } != 0
++        );
++        assert_eq!(CGColor::number_of_components(Some(&color)), 4);
++        let ptr = CGColor::components(Some(&color));
++        assert!(!ptr.is_null());
++        let actual = unsafe { std::slice::from_raw_parts(ptr, 4) };
++        for (actual, expected) in actual.iter().zip(components.iter()) {
++            assert!((actual - expected).abs() < 1e-12);
++        }
++        assert!((CGColor::alpha(Some(&color)) - components[3]).abs() < 1e-12);
++    }
++}
++
++#[test]
++fn layer_retains_color_after_rust_owner_is_dropped() {
++    objc::rc::autoreleasepool(|| unsafe {
++        use objc::*;
++        assert!(
++            CACurrentMediaTime() > 0.0,
++            "load the genuine framework before looking up CALayer by name"
++        );
++        let layer: *mut objc::runtime::Object = msg_send![class!(CALayer), new];
++        assert!(!layer.is_null());
++        let layer = objc::rc::StrongPtr::new(layer);
++        let color = create_srgb_color([0.125, 0.375, 0.625, 0.875]).unwrap();
++        let raw = CFRetained::as_ptr(&color).as_ptr();
++        let _: () = msg_send![*layer, setBackgroundColor:raw];
++        drop(color);
++        let stored: *mut CGColor = msg_send![*layer, backgroundColor];
++        assert_eq!(stored, raw);
++        let retained = CFRetained::retain(std::ptr::NonNull::new(stored).unwrap());
++        assert_eq!(CGColor::alpha(Some(&retained)), 0.875);
++    });
++}
+--- /dev/null
++++ b/wezterm-gui/src/termwindow/render_compat.rs
+@@ -0,0 +1,13 @@
++pub(crate) fn ensure_front_end_supported(
++    front_end: config::FrontEndSelection,
++) -> anyhow::Result<()> {
++    if matches!(front_end, config::FrontEndSelection::WebGpu) {
++        anyhow::bail!("WebGpu is unavailable in this Mavericks build; use OpenGL or Software");
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    include!("render_compat_tests.rs");
++}
+--- /dev/null
++++ b/wezterm-gui/src/termwindow/render_compat_tests.rs
+@@ -0,0 +1,24 @@
++use super::*;
++
++#[test]
++fn explicit_webgpu_is_rejected_and_opengl_software_paths_remain_allowed() {
++    let error = ensure_front_end_supported(config::FrontEndSelection::WebGpu).unwrap_err();
++    assert!(error
++        .to_string()
++        .contains("WebGpu is unavailable in this Mavericks build"));
++    ensure_front_end_supported(config::FrontEndSelection::OpenGL).unwrap();
++    ensure_front_end_supported(config::FrontEndSelection::Software).unwrap();
++}
++
++#[test]
++fn lua_gpu_enumeration_reports_unavailable_instead_of_initializing_wgpu() {
++    use config::lua::{get_or_create_sub_module, mlua};
++    let lua = mlua::Lua::new();
++    crate::scripting::register(&lua).unwrap();
++    let gui = get_or_create_sub_module(&lua, "gui").unwrap();
++    let function: mlua::Function = gui.get("enumerate_gpus").unwrap();
++    let error = function.call::<(), mlua::Value>(()).unwrap_err();
++    assert!(error
++        .to_string()
++        .contains("WebGpu is unavailable in this Mavericks build"));
++}
