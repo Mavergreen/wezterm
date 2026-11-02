@@ -1,0 +1,389 @@
+--- a/window/src/os/macos/connection.rs
++++ b/window/src/os/macos/connection.rs
+@@ -134,23 +134,7 @@
+     }
+ 
+     fn get_appearance(&self) -> Appearance {
+-        let name = unsafe {
+-            let appearance: id = msg_send![self.ns_app, effectiveAppearance];
+-            nsstring_to_str(msg_send![appearance, name])
+-        };
+-        log::debug!("NSAppearanceName is {name}");
+-        match name {
+-            "NSAppearanceNameVibrantDark" | "NSAppearanceNameDarkAqua" => Appearance::Dark,
+-            "NSAppearanceNameVibrantLight" | "NSAppearanceNameAqua" => Appearance::Light,
+-            "NSAppearanceNameAccessibilityHighContrastVibrantLight"
+-            | "NSAppearanceNameAccessibilityHighContrastAqua" => Appearance::LightHighContrast,
+-            "NSAppearanceNameAccessibilityHighContrastVibrantDark"
+-            | "NSAppearanceNameAccessibilityHighContrastDarkAqua" => Appearance::DarkHighContrast,
+-            _ => {
+-                log::warn!("Unknown NSAppearanceName {name}, assume Light");
+-                Appearance::Light
+-            }
+-        }
++        unsafe { super::mavericks_compat::appearance_for_app(self.ns_app) }
+     }
+ 
+     fn run_message_loop(&self) -> anyhow::Result<()> {
+--- a/window/src/os/macos/window.rs
++++ b/window/src/os/macos/window.rs
+@@ -259,25 +259,32 @@
+ 
+     impl GlState {
+         pub fn create(view: id) -> anyhow::Result<Self> {
++            unsafe { Self::create_with_attributes(view, &[
++                appkit::NSOpenGLPFAOpenGLProfile as u32,
++                appkit::NSOpenGLProfileVersion3_2Core as u32,
++                appkit::NSOpenGLPFAClosestPolicy as u32,
++                appkit::NSOpenGLPFAColorSize as u32,
++                32,
++                appkit::NSOpenGLPFAAlphaSize as u32,
++                8,
++                appkit::NSOpenGLPFADepthSize as u32,
++                24,
++                appkit::NSOpenGLPFAStencilSize as u32,
++                8,
++                appkit::NSOpenGLPFAAllowOfflineRenderers as u32,
++                appkit::NSOpenGLPFAAccelerated as u32,
++                appkit::NSOpenGLPFADoubleBuffer as u32,
++                0,
++            ]) }
++        }
++
++        /// # Safety
++        /// The native parser requires a well-formed, zero-terminated attribute list.
++        /// A non-nil view must remain valid while its context uses the drawable.
++        pub(super) unsafe fn create_with_attributes(view: id, attributes: &[u32]) -> anyhow::Result<Self> {
+             log::trace!("Calling NSOpenGLPixelFormat::initWithAttributes");
+             let pixel_format = unsafe {
+-                StrongPtr::new(NSOpenGLPixelFormat::alloc(nil).initWithAttributes_(&[
+-                    appkit::NSOpenGLPFAOpenGLProfile as u32,
+-                    appkit::NSOpenGLProfileVersion3_2Core as u32,
+-                    appkit::NSOpenGLPFAClosestPolicy as u32,
+-                    appkit::NSOpenGLPFAColorSize as u32,
+-                    32,
+-                    appkit::NSOpenGLPFAAlphaSize as u32,
+-                    8,
+-                    appkit::NSOpenGLPFADepthSize as u32,
+-                    24,
+-                    appkit::NSOpenGLPFAStencilSize as u32,
+-                    8,
+-                    appkit::NSOpenGLPFAAllowOfflineRenderers as u32,
+-                    appkit::NSOpenGLPFAAccelerated as u32,
+-                    appkit::NSOpenGLPFADoubleBuffer as u32,
+-                    0,
+-                ]))
++                StrongPtr::new(NSOpenGLPixelFormat::alloc(nil).initWithAttributes_(attributes))
+             };
+             log::trace!("NSOpenGLPixelFormat::initWithAttributes returned");
+             ensure!(
+@@ -285,9 +292,11 @@
+                 "failed to create NSOpenGLPixelFormat"
+             );
+ 
+-            // Allow using retina resolutions; without this we're forced into low res
+-            // and the system will scale us up, resulting in blurry rendering
++            // Native CGL draws to the view, not its Core Animation backing layer.
++            // A remaining layer hides that drawable on Mavericks after EGL fallback.
+             unsafe {
++                let _: () = msg_send![view, setWantsLayer: NO];
++                // Retina needs a full-resolution drawable rather than system upscaling.
+                 let _: () = msg_send![view, setWantsBestResolutionOpenGLSurface: YES];
+             }
+ 
+@@ -537,7 +546,9 @@
+             );
+ 
+             // Prevent Cocoa native tabs from being used
+-            let _: () = msg_send![*window, setTabbingMode:2 /* NSWindowTabbingModeDisallowed */];
++            let _ = super::mavericks_compat::with_selector(*window, sel!(setTabbingMode:), || {
++                let _: () = msg_send![*window, setTabbingMode:2 /* NSWindowTabbingModeDisallowed */];
++            });
+             let _: () = msg_send![*window, setRestorable: NO];
+ 
+             window.setReleasedWhenClosed_(NO);
+@@ -1461,18 +1472,24 @@
+             let _: () = msg_send![button, setHidden: to_yes_no(!has_decorations)];
+         }
+ 
+-        window.setTitleVisibility_(if decorations.contains(WindowDecorations::TITLE) {
+-            appkit::NSWindowTitleVisibility::NSWindowTitleVisible
+-        } else {
+-            appkit::NSWindowTitleVisibility::NSWindowTitleHidden
+-        });
++        let title_visible = decorations.contains(WindowDecorations::TITLE);
++        if super::mavericks_compat::with_selector(**window, sel!(setTitleVisibility:), || {
++            window.setTitleVisibility_(if title_visible {
++                appkit::NSWindowTitleVisibility::NSWindowTitleVisible
++            } else {
++                appkit::NSWindowTitleVisibility::NSWindowTitleHidden
++            });
++        }).is_none() && !title_visible {
++            log::warn!("native title visibility is unavailable; preserving the classic titlebar");
++        }
+ 
+-        if decorations.contains(WindowDecorations::INTEGRATED_BUTTONS)
++        let transparent = decorations.contains(WindowDecorations::INTEGRATED_BUTTONS)
+             || decorations.contains(WindowDecorations::MACOS_USE_BACKGROUND_COLOR_AS_TITLEBAR_COLOR)
+-        {
+-            window.setTitlebarAppearsTransparent_(YES);
+-        } else {
+-            window.setTitlebarAppearsTransparent_(to_yes_no(!has_decorations));
++            || !has_decorations;
++        if super::mavericks_compat::with_selector(**window, sel!(setTitlebarAppearsTransparent:), || {
++            window.setTitlebarAppearsTransparent_(to_yes_no(transparent));
++        }).is_none() && transparent {
++            log::warn!("native transparent titlebars are unavailable; preserving the classic titlebar");
+         }
+ 
+         if let Some(titlebar_view_container) = get_titlebar_view_container(window) {
+@@ -3114,9 +3131,9 @@
+ 
+     extern "C" fn make_backing_layer(view: &mut Object, _: Sel) -> id {
+         log::trace!("make_backing_layer");
+-        let class = class!(CAMetalLayer);
++        let class = class!(CALayer);
+         unsafe {
+-            // Use type method to get a instance of CAMetalLayer.
++            // Use the native layer factory without requiring Metal.
+             // So that we don't have to worry about retaining/releasing it.
+             let layer: id = msg_send![class, layer];
+             let () = msg_send![layer, setDelegate: view];
+@@ -3266,7 +3283,11 @@
+             Protocol::get("NSTextInputClient").expect("failed to get NSTextInputClient protocol"),
+         );
+ 
+-        cls.add_protocol(Protocol::get("CALayerDelegate").expect("CALayerDelegate not defined"));
++        if let Some(protocol) = Protocol::get("CALayerDelegate") {
++            cls.add_protocol(protocol);
++        } else {
++            log::debug!("using legacy informal CALayer delegation");
++        }
+ 
+         unsafe {
+             cls.add_method(
+@@ -3520,3 +3541,83 @@
+         cls.register()
+     }
+ }
++
++#[cfg(test)]
++mod mavericks_compat_view_tests {
++    use super::*;
++
++    #[link(name = "QuartzCore", kind = "framework")]
++    extern "C" {
++        fn CACurrentMediaTime() -> f64;
++    }
++    #[link(name = "AppKit", kind = "framework")]
++    extern "C" {
++        #[link_name = "NSApp"]
++        static APPLICATION: id;
++    }
++
++    #[test]
++    fn legacy_informal_layer_delegate_allows_window_view_registration() {
++        unsafe {
++            std::hint::black_box(APPLICATION);
++            assert!(CACurrentMediaTime() > 0.0);
++        }
++        assert!(Protocol::get("NSTextInputClient").is_some());
++        let class = WindowView::get_class();
++        assert!(class.instance_method(sel!(displayLayer:)).is_some());
++        assert!(class.instance_method(sel!(drawLayer:inContext:)).is_some());
++        assert!(class.instance_method(sel!(layer:shouldInheritContentsScale:fromWindow:)).is_some());
++    }
++
++    #[test]
++    fn unavailable_accelerated_renderer_returns_the_native_format_error() {
++        unsafe { std::hint::black_box(APPLICATION); }
++        let result = unsafe { cglbits::GlState::create_with_attributes(nil, &[
++            appkit::NSOpenGLPFARendererID as u32,
++            0x00ffff00,
++            appkit::NSOpenGLPFANoRecovery as u32,
++            appkit::NSOpenGLPFAAccelerated as u32,
++            0,
++        ]) };
++        let error = result.err().expect("nonexistent accelerated renderer must be rejected");
++        assert!(error.to_string().contains("failed to create NSOpenGLPixelFormat"));
++    }
++
++    #[test]
++    fn native_cgl_detaches_layer_backing_before_attaching_its_drawable() {
++        objc::rc::autoreleasepool(|| unsafe {
++            std::hint::black_box(APPLICATION);
++            assert!(CACurrentMediaTime() > 0.0);
++            let raw: id = msg_send![class!(NSView), new];
++            let _view = StrongPtr::new(raw);
++            let _: () = msg_send![raw, setWantsLayer: YES];
++            let before: BOOL = msg_send![raw, wantsLayer];
++            assert_eq!(before, YES);
++            let _state = cglbits::GlState::create(raw).expect("genuine native CGL context");
++            let after: BOOL = msg_send![raw, wantsLayer];
++            assert_eq!(after, NO, "native CGL must not draw behind a Core Animation layer");
++        });
++    }
++
++    #[test]
++    fn opengl_backing_layer_uses_real_calayer_without_metal() {
++        unsafe {
++            std::hint::black_box(APPLICATION);
++            assert!(CACurrentMediaTime() > 0.0);
++        }
++        objc::rc::autoreleasepool(|| unsafe {
++            let raw: id = msg_send![class!(NSView), new];
++            let _view = StrongPtr::new(raw);
++            let layer = WindowView::make_backing_layer(&mut *raw, sel!(makeBackingLayer));
++            assert!(!layer.is_null());
++            let ordinary: BOOL = msg_send![layer, isKindOfClass:class!(CALayer)];
++            assert_eq!(ordinary, YES);
++            let delegate: id = msg_send![layer, delegate];
++            assert_eq!(delegate, raw);
++            let scale: f64 = msg_send![layer, contentsScale];
++            assert_eq!(scale, 1.0);
++            let opaque: BOOL = msg_send![layer, isOpaque];
++            assert_eq!(opaque, NO);
++        });
++    }
++}
+--- a/window/src/os/macos/mavericks_compat.rs
++++ b/window/src/os/macos/mavericks_compat.rs
+@@ -9,6 +9,52 @@
+         .ok_or_else(|| anyhow::anyhow!("unable to allocate the sRGB color"))
+ }
+ 
++pub(super) unsafe fn with_selector<T>(
++    receiver: cocoa::base::id,
++    selector: objc::runtime::Sel,
++    action: impl FnOnce() -> T,
++) -> Option<T> {
++    use objc::*;
++    if receiver.is_null() {
++        return None;
++    }
++    let available: objc::runtime::BOOL =
++        unsafe { msg_send![receiver, respondsToSelector:selector] };
++    if available == objc::runtime::NO {
++        None
++    } else {
++        Some(action())
++    }
++}
++
++pub(super) unsafe fn appearance_for_app(app: cocoa::base::id) -> crate::Appearance {
++    use crate::Appearance;
++    use objc::*;
++    let name = unsafe {
++        with_selector(app, sel!(effectiveAppearance), || {
++            let appearance: cocoa::base::id = msg_send![app, effectiveAppearance];
++            super::nsstring_to_str(msg_send![appearance, name]).to_string()
++        })
++    };
++    let name = match name {
++        Some(name) => name,
++        None => return Appearance::Light,
++    };
++    log::debug!("NSAppearanceName is {name}");
++    match name.as_str() {
++        "NSAppearanceNameVibrantDark" | "NSAppearanceNameDarkAqua" => Appearance::Dark,
++        "NSAppearanceNameVibrantLight" | "NSAppearanceNameAqua" => Appearance::Light,
++        "NSAppearanceNameAccessibilityHighContrastVibrantLight"
++        | "NSAppearanceNameAccessibilityHighContrastAqua" => Appearance::LightHighContrast,
++        "NSAppearanceNameAccessibilityHighContrastVibrantDark"
++        | "NSAppearanceNameAccessibilityHighContrastDarkAqua" => Appearance::DarkHighContrast,
++        _ => {
++            log::warn!("Unknown NSAppearanceName {name}, assume Light");
++            Appearance::Light
++        }
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     include!("mavericks_compat_tests.rs");
+--- a/window/src/os/macos/mavericks_compat_tests.rs
++++ b/window/src/os/macos/mavericks_compat_tests.rs
+@@ -56,3 +56,63 @@
+         assert_eq!(CGColor::alpha(Some(&retained)), 0.875);
+     });
+ }
++
++#[link(name = "AppKit", kind = "framework")]
++extern "C" {
++    #[link_name = "NSApp"]
++    static APPLICATION: cocoa::base::id;
++}
++
++#[test]
++fn absent_selectors_skip_actions_and_fall_back_to_light() {
++    use objc::*;
++    unsafe {
++        std::hint::black_box(APPLICATION);
++    }
++    objc::rc::autoreleasepool(|| unsafe {
++        let raw: cocoa::base::id = msg_send![class!(NSObject), new];
++        let object = objc::rc::StrongPtr::new(raw);
++        let invoked = std::cell::Cell::new(false);
++        for (name, selector) in [
++            ("NSApplication", sel!(effectiveAppearance)),
++            ("NSWindow", sel!(setTabbingMode:)),
++            ("NSWindow", sel!(setTitleVisibility:)),
++            ("NSWindow", sel!(setTitlebarAppearsTransparent:)),
++        ] {
++            assert!(objc::runtime::Class::get(name)
++                .unwrap()
++                .instance_method(selector)
++                .is_none());
++            assert!(with_selector(*object, selector, || invoked.set(true)).is_none());
++        }
++        assert!(!invoked.get());
++        assert!(matches!(
++            appearance_for_app(*object),
++            crate::Appearance::Light
++        ));
++        assert!(matches!(
++            appearance_for_app(cocoa::base::nil),
++            crate::Appearance::Light
++        ));
++    });
++}
++
++#[test]
++fn supported_native_selector_still_performs_the_real_operation() {
++    use objc::*;
++    unsafe {
++        std::hint::black_box(APPLICATION);
++    }
++    objc::rc::autoreleasepool(|| unsafe {
++        let raw: cocoa::base::id = msg_send![class!(NSMutableDictionary), new];
++        let dictionary = objc::rc::StrongPtr::new(raw);
++        let key = super::super::nsstring("mavericks-guard-test");
++        let value = super::super::nsstring("real-native-value");
++        assert!(with_selector(*dictionary, sel!(setObject:forKey:), || {
++            let _: () = msg_send![*dictionary, setObject:*value forKey:*key];
++        })
++        .is_some());
++        let stored: cocoa::base::id = msg_send![*dictionary, objectForKey:*key];
++        assert_eq!(stored, *value);
++    });
++}
+--- a/wezterm-gui/src/main.rs
++++ b/wezterm-gui/src/main.rs
+@@ -1165,6 +1165,9 @@
+ }
+ 
+ fn run() -> anyhow::Result<()> {
++    #[cfg(target_os = "macos")]
++    env_bootstrap::bootstrap();
++
+     // Inform the system of our AppUserModelID.
+     // Without this, our toast notifications won't be correctly
+     // attributed to our application.
+@@ -1198,6 +1201,7 @@
+         }
+     };
+ 
++    #[cfg(not(target_os = "macos"))]
+     env_bootstrap::bootstrap();
+     // window_funcs is not set up by env_bootstrap as window_funcs is
+     // GUI environment specific and env_bootstrap is used to setup the

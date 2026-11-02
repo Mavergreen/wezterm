@@ -9,6 +9,19 @@
  wezterm-uds = { path = "wezterm-uds" }
  wezterm-version = { path = "wezterm-version" }
  wgpu = "25.0.2"
+--- a/wezterm-gui/src/frontend.rs
++++ b/wezterm-gui/src/frontend.rs
+@@ -34,6 +34,10 @@
+ 
+ impl GuiFrontEnd {
+     pub fn try_new() -> anyhow::Result<Rc<GuiFrontEnd>> {
++        // Register the native launch observer before NSApplication's first run,
++        // even when this process has not created a notification of its own.
++        #[cfg(target_os = "macos")]
++        macos_initialize();
+         let connection = Connection::init()?;
+         connection.set_event_handler(Self::app_event_handler);
+ 
 --- a/wezterm-toast-notification/Cargo.toml
 +++ b/wezterm-toast-notification/Cargo.toml
 @@ -8,6 +8,11 @@
@@ -54,7 +67,7 @@
  
 --- /dev/null
 +++ b/wezterm-toast-notification/src/macos_legacy.rs
-@@ -0,0 +1,277 @@
+@@ -0,0 +1,315 @@
 +#![cfg(target_os = "macos")]
 +#![allow(deprecated)]
 +use crate::ToastNotification;
@@ -63,7 +76,7 @@
 +use objc2::runtime::{AnyClass, AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 +use objc2::{define_class, msg_send, sel, AllocAnyThread};
 +use objc2_foundation::{
-+    ns_string, NSDictionary, NSOperationQueue, NSPropertyListFormat, NSPropertyListSerialization,
++    ns_string, NSDictionary, NSNotification, NSNotificationCenter, NSOperationQueue, NSPropertyListFormat, NSPropertyListSerialization,
 +    NSString, NSThread, NSUserNotification, NSUserNotificationCenter,
 +    NSUserNotificationCenterDelegate, NSUserNotificationDefaultSoundName,
 +};
@@ -72,6 +85,13 @@
 +use std::sync::{LazyLock, Mutex, Once};
 +
 +type Error = Box<dyn std::error::Error>;
++
++// Genuine AppKit exports, available since 10.0 and 10.8 respectively.
++#[link(name = "AppKit", kind = "framework")]
++extern "C" {
++    static NSApplicationDidFinishLaunchingNotification: &'static NSString;
++    static NSApplicationLaunchUserNotificationKey: &'static NSString;
++}
 +
 +fn notification_id(notification: &NSUserNotification) -> String {
 +    notification
@@ -83,6 +103,9 @@
 +#[derive(Default)]
 +struct Book {
 +    pending: HashMap<String, bool>,
++    // Native activations can refer to notifications from an earlier process.
++    // Keep consumed IDs for this process lifetime, separately from delivery state.
++    activated: HashSet<String>,
 +}
 +
 +impl Book {
@@ -115,14 +138,17 @@
 +static BOOK: LazyLock<Mutex<Book>> = LazyLock::new(|| Mutex::new(Book::default()));
 +
 +fn activate_with(notification: &NSUserNotification, book: &Mutex<Book>, open: impl FnOnce(&str)) {
-+    if book
-+        .lock()
-+        .unwrap()
-+        .pending
-+        .remove(&notification_id(notification))
-+        .is_none()
-+    {
++    let id = notification_id(notification);
++    if id.is_empty() {
++        log::error!("cannot activate native notification without an identifier");
 +        return;
++    }
++    {
++        let mut book = book.lock().unwrap();
++        if !book.activated.insert(id.clone()) {
++            return;
++        }
++        book.pending.remove(&id);
 +    }
 +    if let Some(info) = notification.userInfo() {
 +        if let Some(url) = info.objectForKey(ns_string!("url")) {
@@ -131,6 +157,12 @@
 +            }
 +        }
 +    }
++}
++
++fn launch_notification(notification: &NSNotification) -> Option<Retained<NSUserNotification>> {
++    let info = notification.userInfo()?;
++    let value = info.objectForKey(unsafe { NSApplicationLaunchUserNotificationKey })?;
++    value.downcast::<NSUserNotification>().ok()
 +}
 +
 +fn expire_with(
@@ -229,6 +261,17 @@
 +    }
 +
 +    impl Delegate {
++        #[unsafe(method(applicationDidFinishLaunching:))]
++        fn application_did_finish_launching(&self, launch: &NSNotification) {
++            if let Some(notification) = launch_notification(launch) {
++                activate_with(&notification, &BOOK, wezterm_open_url::open_url);
++                match center() {
++                    Ok(center) => center.removeDeliveredNotification(&notification),
++                    Err(error) => log::error!("cannot remove activated launch notification: {error}"),
++                }
++            }
++        }
++
 +        #[unsafe(method(expireNotification:))]
 +        fn expire(&self, notification: &NSUserNotification) {
 +            match center() {
@@ -261,14 +304,22 @@
 +    INIT.call_once(|| {
 +        let allocated = Delegate::alloc().set_ivars(());
 +        let delegate: Retained<Delegate> = unsafe { msg_send![super(allocated), init] };
++        // NSApplication posts the same launch notification that it sends to its
++        // delegate. Observe it before run(), including launches with no new toast.
++        // The observer and its registration intentionally share process lifetime.
++        unsafe {
++            NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
++                &delegate, sel!(applicationDidFinishLaunching:),
++                Some(NSApplicationDidFinishLaunchingNotification), None);
++        }
 +        DELEGATE.store(Retained::into_raw(delegate), Ordering::Release);
 +    });
 +    unsafe { Retained::retain(DELEGATE.load(Ordering::Acquire)).unwrap() }
 +}
 +
 +fn initialize_on_main() -> Result<Retained<NSUserNotificationCenter>, Error> {
-+    let center = center()?;
 +    let delegate = retained_delegate();
++    let center = center()?;
 +    unsafe {
 +        center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
 +    }
@@ -334,7 +385,7 @@
 +}
 --- /dev/null
 +++ b/wezterm-toast-notification/src/macos_legacy_tests.rs
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,196 @@
 +use super::*;
 +use objc2::rc::Weak;
 +
@@ -374,6 +425,84 @@
 +        activate_with(&notification, &book, |url| opened.push(url.to_string()));
 +    }
 +    assert_eq!(opened, vec!["https://example.invalid/click"]);
++}
++
++#[test]
++fn persistent_click_after_restart_opens_once_without_process_local_pending_state() {
++    let notification = make_notification(&toast(Some("https://example.invalid/restarted"))).unwrap();
++    let restarted_book = Mutex::new(Book::default());
++    let mut opened = Vec::new();
++    for _ in 0..2 {
++        activate_with(&notification, &restarted_book, |url| {
++            assert!(restarted_book.try_lock().is_ok(), "opening can reenter");
++            opened.push(url.to_string());
++        });
++    }
++    assert_eq!(opened, vec!["https://example.invalid/restarted"]);
++}
++
++#[test]
++fn native_application_launch_notification_reaches_activation_before_first_toast() {
++    // The framework key and genuine Foundation broadcast exercise the registered
++    // selector, without launching another application or requesting a real banner.
++    use objc2_foundation::NSNotificationCenter;
++    #[link(name = "AppKit", kind = "framework")]
++    extern "C" {
++        static NSApplicationDidFinishLaunchingNotification: &'static NSString;
++        static NSApplicationLaunchUserNotificationKey: &'static NSString;
++    }
++    let _owner = retained_delegate();
++    let notification = make_notification(&toast(None)).unwrap();
++    BOOK.lock().unwrap().track(&notification);
++    let info = NSDictionary::<NSString, AnyObject>::from_slices(
++        &[unsafe { NSApplicationLaunchUserNotificationKey }], &[&*notification]);
++    // Erase only lightweight generics: every NSString key is an NSObject.
++    let info: Retained<NSDictionary> = unsafe { Retained::cast_unchecked(info) };
++    unsafe {
++        NSNotificationCenter::defaultCenter().postNotificationName_object_userInfo(
++            NSApplicationDidFinishLaunchingNotification, None, Some(&info));
++    }
++    assert!(!BOOK.lock().unwrap().pending.contains_key(&notification_id(&notification)),
++            "the registered native launch observer must consume the activation");
++}
++
++#[test]
++fn cold_launch_payload_opens_persisted_url_and_later_delegate_activation_is_a_duplicate() {
++    let notification = make_notification(&toast(Some("https://example.invalid/cold-launch"))).unwrap();
++    let info = NSDictionary::<NSString, AnyObject>::from_slices(
++        &[unsafe { NSApplicationLaunchUserNotificationKey }], &[&*notification]);
++    let launch = unsafe {
++        NSNotification::notificationWithName_object_userInfo(
++            NSApplicationDidFinishLaunchingNotification, None, info.downcast_ref::<NSDictionary>())
++    };
++    let activated = launch_notification(&launch).expect("native launch key contains our notification");
++    let restarted_book = Mutex::new(Book::default());
++    let mut opened = Vec::new();
++    activate_with(&activated, &restarted_book, |url| opened.push(url.to_string()));
++    activate_with(&notification, &restarted_book, |url| opened.push(url.to_string()));
++    assert_eq!(opened, vec!["https://example.invalid/cold-launch"]);
++}
++
++#[test]
++fn ordinary_or_malformed_launch_payloads_are_not_activations() {
++    let ordinary = unsafe { NSNotification::notificationWithName_object_userInfo(
++        NSApplicationDidFinishLaunchingNotification, None, None) };
++    assert!(launch_notification(&ordinary).is_none());
++    let info = NSDictionary::<NSString, AnyObject>::from_slices(
++        &[unsafe { NSApplicationLaunchUserNotificationKey }], &[ns_string!("not a notification")]);
++    let malformed = unsafe { NSNotification::notificationWithName_object_userInfo(
++        NSApplicationDidFinishLaunchingNotification, None, info.downcast_ref::<NSDictionary>()) };
++    assert!(launch_notification(&malformed).is_none());
++}
++
++#[test]
++fn unidentified_notifications_do_not_open_urls() {
++    let notification = make_notification(&toast(Some("https://example.invalid/no-id"))).unwrap();
++    notification.setIdentifier(None);
++    let book = Mutex::new(Book::default());
++    let mut opened = Vec::new();
++    activate_with(&notification, &book, |url| opened.push(url.to_string()));
++    assert!(opened.is_empty());
 +}
 +
 +#[test]

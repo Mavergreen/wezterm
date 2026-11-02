@@ -3,6 +3,7 @@
 set -eu
 REPO_ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 . "$REPO_ROOT/build/lib.sh"
+"$PYTHON" "$REPO_ROOT/build/artifacts.py" gui-idle "$WORK_ROOT" "$REPO_ROOT"
 if [ -f "$WORK_ROOT/prepared.json" ]; then
     sh "$REPO_ROOT/build/prepare.sh" --verify
 else
@@ -20,8 +21,7 @@ sh "$REPO_ROOT/build/environment.sh" /usr/local/mavergreen/bin/cargo build --loc
 printf '%s\n' "$rc" > "$EVIDENCE_DIR/build.exit"
 tail -25 "$EVIDENCE_DIR/build.log"
 [ "$rc" -eq 0 ] || exit "$rc"
-if [ -f "$REPO_ROOT/build/stage-app.sh" ]; then
-    sh "$REPO_ROOT/build/stage-app.sh"
-else
-    printf 'Binaries built; local app staging is not implemented yet.\n'
-fi
+"$PYTHON" "$REPO_ROOT/build/artifacts.py" record-build "$WORK_ROOT" "$REPO_ROOT"
+printf '%s\n' "$$" > "$WORK_ROOT/.lock/stage-owner"
+trap 'rm -f "$WORK_ROOT/.lock/stage-owner"; rmdir "$WORK_ROOT/.lock"' EXIT
+sh "$REPO_ROOT/build/stage-app.sh" --from-builder

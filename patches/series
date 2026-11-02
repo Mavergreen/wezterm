@@ -2,3 +2,4 @@
 0002-archive-submodules.patch
 0003-legacy-notifications.patch
 0004-no-metal-srgb.patch
+0005-cocoa-startup.patch
