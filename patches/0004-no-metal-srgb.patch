@@ -18,6 +18,16 @@
  whoami = "1.5"
  winapi = "0.3.9"
  window = {path="window"}
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -7633,6 +7633,7 @@
+  "metrics",
+  "mio 0.8.11",
+  "objc",
++ "objc2-core-foundation",
+  "objc2-core-graphics",
+  "plist",
+  "promise",
 --- a/wezterm-gui/Cargo.toml
 +++ b/wezterm-gui/Cargo.toml
 @@ -10,6 +10,8 @@

@@ -8,13 +8,13 @@ REPO_ROOT=$ROOT
 sh "$ROOT/build/prepare.sh" --verify
 mkdir -p "$EVIDENCE_DIR"
 cd "$SOURCE_DIR"
-sh "$ROOT/build/environment.sh" /usr/local/mavergreen/bin/cargo tree --locked \
+sh "$ROOT/build/environment.sh" cargo tree --locked \
     --target x86_64-apple-darwin -p wezterm-gui --prefix none > "$EVIDENCE_DIR/notification-tree.txt"
 if grep '^objc2-user-notifications v' "$EVIDENCE_DIR/notification-tree.txt" >/dev/null; then
     echo 'FAIL: Mavericks product still requires UserNotifications framework'
     exit 1
 fi
-sh "$ROOT/build/environment.sh" /usr/local/mavergreen/bin/cargo test --locked \
+sh "$ROOT/build/environment.sh" cargo test --locked \
     --target x86_64-apple-darwin -p wezterm-toast-notification --lib \
     --no-default-features --features legacy-macos legacy_tests -- --test-threads=1 \
     > "$EVIDENCE_DIR/notification-tests.log" 2>&1 || { tail -45 "$EVIDENCE_DIR/notification-tests.log"; exit 1; }

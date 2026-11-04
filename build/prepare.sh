@@ -15,11 +15,16 @@ if [ -f "$WORK_ROOT/prepared.json" ]; then
 elif [ -e "$SOURCE_DIR" ] || [ -e "$CRATES_DIR" ]; then
     fail 'foreign source/crates without preparation provenance'
 fi
+sh "$REPO_ROOT/build/derive-upstream-version.sh" > /dev/null
+version=$(sh "$SHIPYARD/resolve-version.sh" auto)
+case "$version" in
+    "$(upstream_version)"-mavericks.[1-9]*) ;;
+    *) fail "VERSION $version is not a release of UPSTREAM_VERSION $(upstream_version); delete $REPO_ROOT/VERSION to re-derive" ;;
+esac
 . "$REPO_ROOT/components/wezterm/version"
 "$PYTHON" "$REPO_ROOT/build/check-gitlinks.py" "$REPO_ROOT/components/wezterm/gitlinks.json" "$DIGEST" \
     "deps/freetype/freetype2=$FREETYPE2_DIGEST" "deps/freetype/libpng=$LIBPNG_DIGEST" \
     "deps/freetype/zlib=$ZLIB_DIGEST" "deps/harfbuzz/harfbuzz=$HARFBUZZ_DIGEST"
-. "$REPO_ROOT/build/msc.sh"
 candidate=$(mktemp -d "$WORK_ROOT/preparing.XXXXXX")
 publishing=0
 cleanup_preparation() {
@@ -35,30 +40,14 @@ cleanup_preparation() {
     return "$cleanup_status"
 }
 trap cleanup_preparation EXIT
-archive_source() {
-    repository=${1#https://github.com/}; repository=${repository%.git}
-    sh "$REPO_ROOT/build/fetch.sh" "https://api.github.com/repos/$repository/tarball/$2" "$3" "$WORK_ROOT/downloads" "$4-$2.tar.gz" "$5"
-}
-archive_source "$REPO" "$DIGEST" "$SHA256" wezterm "$candidate/source"
-archive_source "$FREETYPE2_REPO" "$FREETYPE2_DIGEST" "$FREETYPE2_SHA256" FREETYPE2 "$candidate/freetype2"
-archive_source "$LIBPNG_REPO" "$LIBPNG_DIGEST" "$LIBPNG_SHA256" LIBPNG "$candidate/libpng"
-archive_source "$ZLIB_REPO" "$ZLIB_DIGEST" "$ZLIB_SHA256" ZLIB "$candidate/zlib"
-archive_source "$HARFBUZZ_REPO" "$HARFBUZZ_DIGEST" "$HARFBUZZ_SHA256" HARFBUZZ "$candidate/harfbuzz"
-mkdir -p "$candidate/source/deps/freetype" "$candidate/source/deps/harfbuzz"
-for module in freetype2 libpng zlib; do
-    destination=$candidate/source/deps/freetype/$module
-    if [ -d "$destination" ]; then rmdir "$destination"; fi
-    mv "$candidate/$module" "$destination"
-done
-if [ -d "$candidate/source/deps/harfbuzz/harfbuzz" ]; then rmdir "$candidate/source/deps/harfbuzz/harfbuzz"; fi
-mv "$candidate/harfbuzz" "$candidate/source/deps/harfbuzz/harfbuzz"
+sh "$SHIPYARD/fetch_pinned_source.sh" "$REPO" "$DIGEST" "$SHA256" "$candidate/source"
+sh "$SHIPYARD/fetch_pinned_source.sh" "$FREETYPE2_REPO" "$FREETYPE2_DIGEST" "$FREETYPE2_SHA256" "$candidate/source/deps/freetype/freetype2"
+sh "$SHIPYARD/fetch_pinned_source.sh" "$LIBPNG_REPO" "$LIBPNG_DIGEST" "$LIBPNG_SHA256" "$candidate/source/deps/freetype/libpng"
+sh "$SHIPYARD/fetch_pinned_source.sh" "$ZLIB_REPO" "$ZLIB_DIGEST" "$ZLIB_SHA256" "$candidate/source/deps/freetype/zlib"
+sh "$SHIPYARD/fetch_pinned_source.sh" "$HARFBUZZ_REPO" "$HARFBUZZ_DIGEST" "$HARFBUZZ_SHA256" "$candidate/source/deps/harfbuzz/harfbuzz"
 cp "$candidate/source/Cargo.lock" "$candidate/source/Cargo.lock.upstream"
-while IFS= read -r entry; do
-    [ -n "$entry" ] || continue
-    case "$entry" in *..*|/*|*[!A-Za-z0-9._/-]*) fail 'invalid source patch entry' ;; esac
-    (cd "$candidate/source" && patch -p1 -F 0 -V none < "$REPO_ROOT/patches/$entry")
-done < "$REPO_ROOT/patches/series"
-printf 'local-%s\n' "$DIGEST" > "$candidate/source/.tag"
+sh "$SHIPYARD/apply_patches.sh" "$candidate/source" "$REPO_ROOT/patches"
+printf '%s\n' "$version" > "$candidate/source/.tag"
 sh "$REPO_ROOT/build/prepare-crates.sh" "$candidate"
 "$PYTHON" "$REPO_ROOT/build/provenance.py" record "$candidate" "$REPO_ROOT"
 if [ -f "$WORK_ROOT/prepared.json" ]; then
@@ -71,4 +60,4 @@ mv "$candidate/source" "$SOURCE_DIR"
 mv "$candidate/crates" "$CRATES_DIR"
 mv "$candidate/prepared.json" "$WORK_ROOT/prepared.json"
 rm -rf "$candidate"
-printf 'Prepared local-%s\nWORK_ROOT=%s\n' "$DIGEST" "$WORK_ROOT"
+printf 'Prepared %s (upstream commit %s)\nWORK_ROOT=%s\n' "$version" "$DIGEST" "$WORK_ROOT"

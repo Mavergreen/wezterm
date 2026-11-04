@@ -1,0 +1,87 @@
+name: pins-bot
+
+# spec: INGREDIENTS.md "Build ingredients" -- Renovate moves DIGEST in components/wezterm/version weekly,
+#       but the build verifies what follows from that commit (SHA256, COMMITTED, the four submodules'
+#       _DIGEST and _SHA256, gitlinks.json), which Renovate cannot compute, so until those are filled CI
+#       fails at the first fetch. This fills them on Renovate's own branch, in two jobs:
+#       - pins (contents: read) runs scripts/pins-bot.sh fill, which runs scripts/pin-source-tarballs.sh
+#         --fill: it downloads the tarballs and checks with git that each holds exactly its commit's tree.
+#         Upstream's bytes are read there, never run, and never beside a token that can write. Its exit 1
+#         (an error) fails the job, and nothing is pushed.
+#       - push touches no upstream byte: it writes the checked values (scripts/pins-bot.sh apply), commits,
+#         and pushes to the branch with a token of the Mavergreen pins-bot GitHub App (org variable
+#         PINS_BOT_CLIENT_ID, org secret PINS_BOT_PRIVATE_KEY; minted for this repository with contents:
+#         write alone). A push made with GITHUB_TOKEN starts no workflow; the App's push starts the build
+#         like any push. Its checkout keeps the App's credentials because its git push uses them.
+#       renovate.json's gitIgnoredAuthors keeps this bot's commit from marking the branch as edited.
+
+on:
+  push:
+    branches: ['renovate/**']
+
+permissions: {}
+
+# spec: INGREDIENTS.md "Build ingredients" -- a newer push to the branch cancels a run still working on an
+#       older one. The run the bot's own push starts gets a group of its own and skips its jobs: that push
+#       is the checked pins, and it must not cancel the run that made it.
+concurrency:
+  group: pins-bot-${{ github.ref }}${{ github.actor == 'mavergreen-pins-bot[bot]' && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: true
+
+jobs:
+  pins:
+    if: github.actor != 'mavergreen-pins-bot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      pins: ${{ steps.pin.outputs.pins }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install mavericks-shipyard
+        uses: Mavergreen/shipyard/.github/actions/install@v1
+
+      - name: The pins beside DIGEST, if DIGEST moved and they are stale
+        id: pin
+        run: |
+          set -eu
+          pins="$(sh scripts/pins-bot.sh fill origin/main)"
+          echo "pins=$pins" >> "$GITHUB_OUTPUT"
+
+  push:
+    needs: pins
+    if: needs.pins.outputs.pins != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: A pins-bot App token, contents write on this repository alone
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.PINS_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.PINS_BOT_PRIVATE_KEY }}
+          permission-contents: write
+
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app.outputs.token }}
+
+      - name: Commit the pins to the branch, as the App, which starts the build on its new head
+        env:
+          PINS: ${{ needs.pins.outputs.pins }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -eu
+          # shellcheck disable=SC2086
+          applied="$(sh scripts/pins-bot.sh apply $PINS)"
+          [ "$applied" = changed ] || { echo "the pins already hold them"; exit 0; }
+          git -c user.name='mavergreen-pins-bot[bot]' -c user.email='342268518+mavergreen-pins-bot[bot]@users.noreply.github.com' \
+            commit -q -m 'chore(pins): the tarball SHA-256s and gitlinks of the moved WezTerm commit' \
+            -m 'Written by .github/workflows/pins-bot.yml: its pins job checked, with git, that each tarball is its commit'"'"'s tree.' \
+            components/wezterm/version components/wezterm/gitlinks.json
+          git push origin "HEAD:refs/heads/$BRANCH"

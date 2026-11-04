@@ -30,10 +30,12 @@ def binary(path):
 
 def build(work, repo):
     identity = open(os.path.join(work, 'source/.tag')).read().strip()
-    if not re.match(r'^local-[0-9a-f]{40}$', identity):
-        raise ValueError('invalid local build identity')
+    if not re.match(r'^[0-9]{8}\.[0-9]{6}-mavericks\.[1-9][0-9]*$', identity):
+        raise ValueError('invalid build identity: ' + identity)
+    pins = json.load(open(os.path.join(work, 'prepared.json')))['pins']
+    upstream = re.search(r'^DIGEST=([0-9a-f]{40})$', pins, re.M).group(1)
     directory = os.path.join(work, 'target/x86_64-apple-darwin/debug')
-    return {'schema': 1, 'owner': repo, 'build_identity': identity, 'upstream_sha': identity[6:],
+    return {'schema': 1, 'owner': repo, 'build_identity': identity, 'upstream_sha': upstream,
             'prepared_sha256': digest(os.path.join(work, 'prepared.json')),
             'binaries': dict((name, binary(os.path.join(directory, name))) for name in NAMES)}
 

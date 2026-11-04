@@ -6,12 +6,11 @@ REPO_ROOT=$ROOT
 . "$ROOT/build/lib.sh"
 bin=$TARGET_DIR/x86_64-apple-darwin/debug
 [ -x "$bin/wezterm" ] && [ -x "$bin/wezterm-mux-server" ] || { echo 'not built; CLI PTY test needs both executables'; exit 77; }
-. "$ROOT/components/wezterm/version"
 mkdir -p "$EVIDENCE_DIR"
 "$bin/wezterm" --version > "$EVIDENCE_DIR/cli-version.txt"
 "$bin/wezterm-mux-server" --version > "$EVIDENCE_DIR/mux-version.txt"
-grep -F "local-$DIGEST" "$EVIDENCE_DIR/cli-version.txt"
-grep -F "local-$DIGEST" "$EVIDENCE_DIR/mux-version.txt"
+grep -F "$(upstream_version)-mavericks." "$EVIDENCE_DIR/cli-version.txt"
+grep -F "$(upstream_version)-mavericks." "$EVIDENCE_DIR/mux-version.txt"
 "$bin/wezterm" --help > "$EVIDENCE_DIR/cli-help.txt"
 "$bin/wezterm-mux-server" --help > "$EVIDENCE_DIR/mux-help.txt"
 run=$(mktemp -d "$EVIDENCE_DIR/pty.XXXXXX")

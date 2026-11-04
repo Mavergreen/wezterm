@@ -1,0 +1,98 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>Mavergreen/shipyard"
+  ],
+  "gitIgnoredAuthors": [
+    "342268518+mavergreen-pins-bot[bot]@users.noreply.github.com"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "WezTerm, built from a snapshot of main: REF stays main and Renovate moves DIGEST to main's newest commit. What the build verifies beside DIGEST (SHA256, COMMITTED, each submodule's _DIGEST and _SHA256, and gitlinks.json) follows from the commit, and .github/workflows/pins-bot.yml writes it on the PR's branch.",
+      "managerFilePatterns": [
+        "/^components/wezterm/version$/"
+      ],
+      "matchStrings": [
+        "REPO=(?<packageName>\\S+?)\\.git\\s+REF=(?<currentValue>\\S+)\\s+DIGEST=(?<currentDigest>[0-9a-f]{40})"
+      ],
+      "depNameTemplate": "wezterm/wezterm",
+      "datasourceTemplate": "git-refs"
+    },
+    {
+      "customType": "regex",
+      "description": "The Rust toolchain the build compiles with (components/rust/version; rust on 10.9, rust-cross on a modern Mac). build/tools.sh refuses an installed release other than the pin.",
+      "managerFilePatterns": [
+        "/^components/rust/version$/"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>\\S+)\\s*$"
+      ],
+      "depNameTemplate": "Mavergreen/rust",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "The clang22 that compiles and links the build's C and C++ (components/clang22/version; clang22 on 10.9, clang22-cross on a modern Mac). build/tools.sh refuses an installed release other than the pin.",
+      "managerFilePatterns": [
+        "/^components/clang22/version$/"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>\\S+)\\s*$"
+      ],
+      "depNameTemplate": "Mavergreen/clang-22",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "The GNU make the vendored OpenSSL builds with (components/make/version). build/tools.sh refuses an installed release other than the pin.",
+      "managerFilePatterns": [
+        "/^components/make/version$/"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>\\S+)\\s*$"
+      ],
+      "depNameTemplate": "Mavergreen/make",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Longboat, which CI installs to get the 10.9 SDK the clang22 pkgs require (components/longboat/version, CI-only). Longboat tags YYYYMMDD.N; the versioning reads N as the minor, so two releases on one day order.",
+      "managerFilePatterns": [
+        "/^components/longboat/version$/"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>\\S+)\\s*$"
+      ],
+      "depNameTemplate": "Mavergreen/longboat",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "regex:^(?<major>\\d{8})\\.(?<minor>\\d+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "One WezTerm snapshot a week, not one per commit to main: each bump is a release, and the pins bot downloads five tarballs for it.",
+      "matchDepNames": [
+        "wezterm/wezterm"
+      ],
+      "schedule": [
+        "* 4 * * 1"
+      ],
+      "prBodyNotes": [
+        "**The pins beside DIGEST:** `.github/workflows/pins-bot.yml` writes `SHA256`, `COMMITTED`, each submodule's `_DIGEST` and `_SHA256` and `components/wezterm/gitlinks.json` on this branch, after checking with git that each tarball is its commit's tree. Until then the build fails at the first fetch. If the bot failed, run `sh scripts/pin-source-tarballs.sh --fill` on this branch and push what it writes."
+      ]
+    },
+    {
+      "description": "Renovate moves components/clang22/version but cannot write the Linux archive's digest beside it, which fetch_clang22.sh needs on Linux.",
+      "matchDepNames": [
+        "Mavergreen/clang-22"
+      ],
+      "prBodyNotes": [
+        "Before this can merge, replace components/clang22/linux-sha256 with the `clang22-<version>-linux-x86_64.tar.gz` line of the new release's SHA256SUMS: `gh release download <version> -R Mavergreen/clang-22 -p SHA256SUMS -O - | grep linux-x86_64.tar.gz > components/clang22/linux-sha256`."
+      ]
+    }
+  ]
+}

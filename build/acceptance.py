@@ -39,7 +39,8 @@ def non_gui(repo, work, scripts):
     app, staged = current(repo, work)
     report['build'] = staged['build']
     source = os.path.join(work, 'source')
-    allowed = [line.split()[0] for line in read(os.path.join(repo, 'patches/crates/series')).splitlines() if line.strip() and not line.startswith('#')]
+    crate_patches = os.path.join(repo, 'patches/crates')
+    allowed = sorted(name for name in os.listdir(crate_patches) if os.path.isdir(os.path.join(crate_patches, name)) and any(entry.endswith('.patch') for entry in os.listdir(os.path.join(crate_patches, name))))
     run([sys.executable, os.path.join(repo, 'build/check-lock.py'), os.path.join(source, 'Cargo.lock.upstream'), os.path.join(source, 'Cargo.lock')] + allowed, os.path.join(evidence, 'acceptance-lock.log'))
     scratch = tempfile.mkdtemp(prefix='non-gui.', dir=evidence)
     os.chmod(scratch, 0o700)

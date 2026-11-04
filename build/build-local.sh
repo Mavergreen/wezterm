@@ -15,7 +15,7 @@ mkdir -p "$EVIDENCE_DIR"
 printf 'WORK_ROOT=%s\nBuild log: %s/build.log\n' "$WORK_ROOT" "$EVIDENCE_DIR"
 cd "$SOURCE_DIR"
 rc=0
-sh "$REPO_ROOT/build/environment.sh" /usr/local/mavergreen/bin/cargo build --locked \
+sh "$REPO_ROOT/build/environment.sh" cargo build --locked \
     --target x86_64-apple-darwin -p wezterm-gui -p wezterm -p wezterm-mux-server \
     > "$EVIDENCE_DIR/build.log" 2>&1 || rc=$?
 printf '%s\n' "$rc" > "$EVIDENCE_DIR/build.exit"

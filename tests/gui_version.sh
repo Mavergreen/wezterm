@@ -4,7 +4,6 @@ set -eu
 ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$ROOT
 . "$ROOT/build/lib.sh"
-. "$ROOT/components/wezterm/version"
 bin=$TARGET_DIR/x86_64-apple-darwin/debug/wezterm-gui
 [ -x "$bin" ] || { echo 'GUI not built; startup version test requires the real executable'; exit 77; }
 mkdir -p "$WORK_ROOT/gui-version-home"
@@ -14,5 +13,5 @@ XDG_CONFIG_HOME=$HOME/config
 XDG_DATA_HOME=$HOME/data
 export HOME XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME
 "$bin" --version > "$EVIDENCE_DIR/gui-version.txt"
-grep -F "local-$DIGEST" "$EVIDENCE_DIR/gui-version.txt" || { echo 'FAIL: GUI startup did not initialize its pinned build identity'; exit 1; }
-echo 'PASS: GUI --version reports the pinned local build identity'
+grep -F "$(upstream_version)-mavericks." "$EVIDENCE_DIR/gui-version.txt" || { echo 'FAIL: GUI startup did not initialize its pinned build identity'; exit 1; }
+echo 'PASS: GUI --version reports the pinned snapshot version'

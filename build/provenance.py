@@ -35,8 +35,23 @@ def tree(path):
     return hashlib.sha256(json.dumps(rows, sort_keys=True).encode('utf-8')).hexdigest()
 
 
+def refuse_strays(repo, name):
+    for root, dirs, files in os.walk(os.path.join(repo, name)):
+        for entry in sorted(dirs + files):
+            stray = os.path.relpath(os.path.join(root, entry), repo)
+            if entry == '__pycache__' or entry.endswith(('.pyc', '.pyo')):
+                raise ValueError('Python bytecode in the recipe would change its digest; delete ' + stray)
+            # platform: macOS keeps a file's extended attributes in a ._ AppleDouble file beside it on
+            #           a share without native xattrs, such as this checkout's NFS mount
+            if entry.startswith('._'):
+                raise ValueError('AppleDouble metadata in the recipe would change its digest; delete ' + stray)
+
+
 def recipe(repo):
-    return dict((name, tree(os.path.join(repo, name))) for name in ('build', 'components', 'patches'))
+    names = ('build', 'components', 'patches')
+    for name in names:
+        refuse_strays(repo, name)
+    return dict((name, tree(os.path.join(repo, name))) for name in names)
 
 
 def main():

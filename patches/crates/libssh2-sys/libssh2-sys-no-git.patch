@@ -1,0 +1,11 @@
+--- a/build.rs
++++ b/build.rs
+@@ -32,7 +32,7 @@
+         }
+     }
+ 
+-    if !Path::new("libssh2/.git").exists() {
++    if !Path::new("libssh2/include/libssh2.h").exists() {
+         let _ = Command::new("git")
+             .args(&["submodule", "update", "--init"])
+             .status();

@@ -35,20 +35,20 @@ assert_run 1 sh "$ROOT/build/locked-crate.sh" one "$TEST_ROOT/path.lock"
 assert_output 'registry'
 pass 'path source cannot masquerade as verified registry bytes'
 cp "$lock" "$TEST_ROOT/changed.lock"
-assert_run 0 /usr/bin/python "$ROOT/build/check-lock.py" "$lock" "$TEST_ROOT/changed.lock"
+assert_run 0 "${PYTHON:-python}" "$ROOT/build/check-lock.py" "$lock" "$TEST_ROOT/changed.lock"
 sed '/^source =/d; /^checksum =/d' "$lock" > "$TEST_ROOT/changed.lock"
-assert_run 1 /usr/bin/python "$ROOT/build/check-lock.py" "$lock" "$TEST_ROOT/changed.lock" one
+assert_run 1 "${PYTHON:-python}" "$ROOT/build/check-lock.py" "$lock" "$TEST_ROOT/changed.lock" one
 assert_output 'two'
 pass 'undeclared source replacements rejected'
-/usr/bin/python - "$lock" "$TEST_ROOT/changed.lock" <<'PY'
+"${PYTHON:-python}" - "$lock" "$TEST_ROOT/changed.lock" <<'PY'
 import sys
 text = open(sys.argv[1]).read()
 first, second = text.split('[[package]]')[1:]
 first = '\n'.join(x for x in first.split('\n') if not x.startswith(('source =', 'checksum =')))
 open(sys.argv[2], 'w').write('version = 4\n\n[[package]]' + first + '[[package]]' + second)
 PY
-assert_run 0 /usr/bin/python "$ROOT/build/check-lock.py" "$lock" "$TEST_ROOT/changed.lock" one
+assert_run 0 "${PYTHON:-python}" "$ROOT/build/check-lock.py" "$lock" "$TEST_ROOT/changed.lock" one
 sed 's/1.2.3/1.2.4/' "$TEST_ROOT/changed.lock" > "$TEST_ROOT/bumped.lock"
-assert_run 1 /usr/bin/python "$ROOT/build/check-lock.py" "$lock" "$TEST_ROOT/bumped.lock" one
+assert_run 1 "${PYTHON:-python}" "$ROOT/build/check-lock.py" "$lock" "$TEST_ROOT/bumped.lock" one
 assert_output 'one'
 pass 'allowed path substitution cannot upgrade a dependency'
