@@ -1,6 +1,6 @@
 # Build ingredients
 
-This repository is in its local native-port stage. It does not package or publish. Release automation and automatically maintained ingredient pins must be established before a first release; none is claimed to exist here.
+This repository builds and packages natively on Mac OS X 10.9. It does not publish yet. Release automation and automatically maintained ingredient pins must be established before a first release; none is claimed to exist here.
 
 | Input | Identity / provenance | Update policy |
 |---|---|---|
@@ -55,6 +55,10 @@ Pinned so CI installs a known release, but nothing shipped is built with it, so 
 `CMakeLists.txt` is the Sparkle updater, `wezterm-updater.app`. Its identity comes from shipyard's registry line for `wezterm`: bundle id `dev.mavergreen.wezterm.updater` and the feed `https://github.com/Mavergreen/wezterm/releases/latest/download/wezterm.xml`. `build/build-updater.sh` builds it with the clang22 release `components/clang22` pins, through shipyard's `fetch_clang22.sh`, with `RequireAppleClang` off and the documented OBJC flags. It is built for x86_64 at 10.9 only, because the product ships no arm64 slice. Its icon is upstream's `terminal.icns` from the verified prepared source (see above), so configuring before `build/prepare.sh` fails, naming it. Its version is the prepared snapshot version. Its public key is the family's, in `updater/ed25519_key.pub`. `tests/updater.sh` checks the identity, version and icon. It also checks that the updater links only the system and Sparkle, never the product it updates, and that it passes the compat guard. `CMakePresets.json` offers `native` and `cross` presets on shipyard's for configuring it by hand with the installed pinned clang22.
 
 Shipyard 1.0.677 and later carry the `wezterm` registry line. With an older shipyard, `tests/updater.sh` exits 77, naming the shipyard it found.
+
+## Commands on PATH
+
+The pkg installs the app as `/Applications/Mavericks WezTerm.app` and the tree `/usr/local/mavergreen/wezterm`, whose `bin/` holds `wezterm`, `wezterm-gui`, `wezterm-mux-server` and `strip-ansi-escapes`; the `mavergreen` helper links them into `/usr/local/mavergreen/bin`. Each is a two-line sh wrapper that `exec`s the app's own `Contents/MacOS/<tool>` by absolute path, not a symlink. Upstream finds `wezterm-gui` (for `wezterm start`) and `wezterm-mux-server` (when `wezterm cli` starts a server) beside the path the CLI was started by, as `current_exe()` reports it, without resolving symlinks. Measured on 10.9 with the release `wezterm` started through a farm-style chain of symlinks from an unrelated directory: `start` tried to exec `…/bin/wezterm-gui` and `cli list` tried to spawn `…/bin/wezterm-mux-server`, both beside the link, and both failed. Through a wrapper both reached the app's copies. `build/package-pkg.sh` builds the pkg through shipyard's `stage_product.sh`, `build_component_pkg.sh` and `set_install_floor.sh`; `tests/package.sh` reads it back with stevedore and `artifact-facts.sh` and runs artifact conformance on the staged product's pkg. Packaging, like the updater, needs shipyard 1.0.677 or later, whose registry has `wezterm`; with an older one `tests/package.sh` exits 77.
 
 ## Version form
 
