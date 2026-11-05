@@ -12,7 +12,7 @@ On Mavericks with the existing Mavergreen Rust, clang22/Recaulk, LLVM archive to
 
 ```sh
 sh build/prepare.sh
-sh build/build-local.sh
+sh build/build-native.sh
 sh build/check-local.sh --non-gui
 ```
 
@@ -22,9 +22,10 @@ A changed recipe requires `sh build/prepare.sh` again. Modified prepared sources
 
 ## Isolated GUI acceptance
 
-Keep the desktop unlocked while capturing a window. Start the actual staged app through LaunchServices:
+Keep the desktop unlocked while capturing a window. Stage the private acceptance bundle (the product's, without its document types), then start it through LaunchServices:
 
 ```sh
+sh build/stage-app.sh --acceptance
 sh build/check-local.sh --gui
 ```
 

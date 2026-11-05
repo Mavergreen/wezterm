@@ -1,0 +1,24 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "include": ["/usr/local/mavergreen/shipyard/share/cmake/MavericksShipyard/mavericks-presets.json"],
+  "configurePresets": [
+    { "name": "updater", "hidden": true,
+      "cacheVariables": {
+        "CMAKE_OBJC_COMPILER_TARGET": "x86_64-apple-macos10.9",
+        "CMAKE_OBJC_FLAGS": "--no-default-config",
+        "CMAKE_EXE_LINKER_FLAGS": "-fuse-ld=lld",
+        "WEZTERM_PREPARED_SOURCE": "$env{MAVERICKS_BUILD_ROOT}/${sourceDirName}-wezterm-local/source"
+      } },
+    { "name": "native", "inherits": ["mavericks-native", "updater"],
+      "displayName": "native -- the Sparkle updater on Mavericks 10.9, with the installed pinned clang22",
+      "cacheVariables": { "CMAKE_OBJC_COMPILER": "/usr/local/mavergreen/clang22/bin/clang" } },
+    { "name": "cross", "inherits": ["mavericks-cross", "updater"],
+      "displayName": "cross -- the Sparkle updater on a modern host, with the installed pinned clang22-cross",
+      "cacheVariables": { "CMAKE_OBJC_COMPILER": "/usr/local/mavergreen/clang22-cross/bin/clang" } }
+  ],
+  "buildPresets": [
+    { "name": "native", "configurePreset": "native" },
+    { "name": "cross", "configurePreset": "cross" }
+  ]
+}

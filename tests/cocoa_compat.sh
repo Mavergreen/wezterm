@@ -14,7 +14,9 @@ fi
 "$EVIDENCE_DIR/cocoa-availability" > "$EVIDENCE_DIR/cocoa-availability.txt"
 cat "$EVIDENCE_DIR/cocoa-availability.txt"
 cd "$SOURCE_DIR"
-"$CARGO" test --locked --target x86_64-apple-darwin -p window --lib mavericks_compat -- --test-threads=1 \
+# spec: PORT.md "Staging and local acceptance" -- the release profile reuses the product build's
+#       dependencies, where the dev profile compiled the whole graph a second time on a fresh root.
+"$CARGO" test --release --locked --target x86_64-apple-darwin -p window --lib mavericks_compat -- --test-threads=1 \
     > "$EVIDENCE_DIR/cocoa-tests.log" 2>&1 || { tail -50 "$EVIDENCE_DIR/cocoa-tests.log"; exit 1; }
 grep 'absent_selectors_skip_actions_and_fall_back_to_light .* ok' "$EVIDENCE_DIR/cocoa-tests.log" || { echo 'FAIL: actual guarded fallback regression is missing'; exit 1; }
 grep 'supported_native_selector_still_performs_the_real_operation .* ok' "$EVIDENCE_DIR/cocoa-tests.log"

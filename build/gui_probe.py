@@ -9,7 +9,7 @@ import tempfile
 import time
 import uuid
 sys.dont_write_bytecode = True
-from artifacts import assert_gui_idle, digest, stage
+from artifacts import assert_acceptance_stage, assert_gui_idle, digest, stage
 
 
 def write_json(path, value):
@@ -80,6 +80,7 @@ def launch(repo, work, mode):
     staged = stage(work, repo, app)
     if staged != json.load(open(os.path.join(app, '.mavergreen-stage.json'))):
         raise ValueError('modified staged bundle')
+    assert_acceptance_stage(app)
     observer = helper(repo, work)
     run = tempfile.mkdtemp(prefix='gui-' + mode + '.', dir=os.path.join(work, 'evidence'))
     os.chmod(run, 0o700)

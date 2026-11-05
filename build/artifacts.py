@@ -4,13 +4,14 @@ import errno
 import hashlib
 import json
 import os
+import plistlib
 import re
 import stat
 import sys
 sys.dont_write_bytecode = True
 from provenance import tree
 
-NAMES = ('wezterm-gui', 'wezterm', 'wezterm-mux-server')
+NAMES = ('wezterm-gui', 'wezterm', 'wezterm-mux-server', 'strip-ansi-escapes')
 
 
 def digest(path):
@@ -34,9 +35,10 @@ def build(work, repo):
         raise ValueError('invalid build identity: ' + identity)
     pins = json.load(open(os.path.join(work, 'prepared.json')))['pins']
     upstream = re.search(r'^DIGEST=([0-9a-f]{40})$', pins, re.M).group(1)
-    directory = os.path.join(work, 'target/x86_64-apple-darwin/debug')
+    directory = os.path.join(work, 'target/x86_64-apple-darwin/release')
     return {'schema': 1, 'owner': repo, 'build_identity': identity, 'upstream_sha': upstream,
             'prepared_sha256': digest(os.path.join(work, 'prepared.json')),
+            'cargo_messages_sha256': digest(os.path.join(work, 'evidence/cargo-messages.jsonl')),
             'binaries': dict((name, binary(os.path.join(directory, name))) for name in NAMES)}
 
 
@@ -51,6 +53,14 @@ def stage(work, repo, app):
         raise ValueError('foreign staged bundle')
     return {'schema': 1, 'owner': repo, 'build': receipt,
             'contents_sha256': tree(os.path.join(app, 'Contents'))}
+
+
+def assert_acceptance_stage(app):
+    with open(os.path.join(app, 'Contents', 'Info.plist'), 'rb') as stream:
+        info = plistlib.load(stream) if hasattr(plistlib, 'load') else plistlib.readPlist(stream)
+    if 'CFBundleDocumentTypes' in info:
+        raise ValueError('the staged app is the product bundle, whose document types would compete with '
+                         'installed applications; stage it with build/stage-app.sh --acceptance')
 
 
 def assert_gui_idle(work, repo):
@@ -76,6 +86,10 @@ def main():
     action, work, repo = sys.argv[1:4]
     if action == 'gui-idle':
         assert_gui_idle(work, repo)
+        return
+    if action == 'verify-acceptance-stage':
+        stage(work, repo, sys.argv[4])
+        assert_acceptance_stage(sys.argv[4])
         return
     if action.endswith('stage'):
         app = sys.argv[4]

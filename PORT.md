@@ -50,7 +50,7 @@ Cargo removed 28 optional upstream dependency identities when those defaults wer
 
 The titlebar helper creates the named kCGColorSpaceSRGB via CGColorSpaceCreateWithName, then CGColorCreate with four CGFloat components, checking allocation failures and preserving CFRetained/layer ownership. No device/generic RGB fallback or exported compatibility API is introduced. Its direct objc2-core-foundation dependency uses the already-locked 0.3.2, and the patch carries the matching edge in `window`'s Cargo.lock dependency list, so the patched manifests agree with the patched lock under `cargo fetch --locked` before any crate override is applied. Native tests compare independently created named spaces with CFEqual and check transparent black, opaque white, fractional RGBA and alpha; substituting device RGB fails the identity assertion. A separate native CALayer retention characterization explicitly loads genuine QuartzCore and proves the native property retains the color after the Rust owner drops. Actual GUI startup subsequently preserved the classic Mavericks titlebar; the unavailable modern transparent-titlebar option is explicitly reported rather than silently simulated.
 
-Shipyard's compatibility guard accepts the actual staged GUI, CLI and mux as x86_64 with SDK/minos 10.9 and no post-10.9 imports. The subsequent startup and real-app acceptance are described below.
+`build/check-compat.sh` runs shipyard's compatibility guard, with clang22's Mach-O readers, on every Mach-O file in the staged app. It accepts the GUI, CLI, mux and strip-ansi-escapes as x86_64 with SDK/minos 10.9 and no post-10.9 imports; `tests/compat_guard.sh` proves that a fixture with an 11.0 minos, or one importing `_clock_gettime`, fails it. The subsequent startup and real-app acceptance are described below.
 
 ## Native Cocoa startup and CGL presentation
 
@@ -64,9 +64,19 @@ The constructor's original native pixel-format failure also has a real negative 
 
 macOS environment bootstrap now runs before argument parsing so the GUI's --version reports the snapshot version (`<UPSTREAM_VERSION>-mavericks.<N>`, derived from the pinned commit time) like its CLI/mux siblings. Acceptance always gives these product executions private HOME/config/runtime state, including version/help invocations; compiler-only tests retain their stable toolchain SDK/cache environment.
 
+## Upstream's update checker
+
+Upstream's GUI checks GitHub for a newer WezTerm release unless `check_for_updates` is false. This product updates through its own Sparkle updater instead, so the build selects upstream's `distro-defaults` feature (`--features wezterm-gui/distro-defaults`), which upstream's README-DISTRO-MAINTAINER.md recommends for packagers. Its only effect is that `check_for_updates` defaults to false. No patch is carried. A user who sets it to true gets upstream's check back. `tests/update_check.sh` reads cargo's messages from the recorded release build and requires `config` to be compiled with that feature. It also requires upstream's default to still read it. The GUI's thread that does the check is not exercised headlessly.
+
+## strip-ansi-escapes
+
+The app ships upstream's `strip-ansi-escapes` utility in `Contents/MacOS`, because upstream's macOS distribution (`ci/deploy.sh`) puts it there beside `wezterm`, `wezterm-gui` and `wezterm-mux-server`. `tests/app_stage.sh` runs the staged copy.
+
 ## Staging and local acceptance
 
-`build/stage-app.sh` transactionally publishes an owned local app with the actual freshly built three executables, upstream icon/resources, shell integration/completion, LICENSE.md and compiled terminfo. It sets Mavericks WezTerm/dev.mavergreen.wezterm and the local source identity, and removes document associations so the private probe does not compete with installed applications. Build/stage receipts bind prepared inputs, executable hashes/modes/sizes and the staged Contents tree. Active canonical GUI sessions block rebuilding/restaging over their mapped artifacts. No installer or global trust/configuration change is involved.
+`build/stage-app.sh` transactionally publishes an owned local app with the actual freshly built four executables, upstream icon/resources, shell integration/completion, LICENSE.md and compiled terminfo. It sets Mavericks WezTerm/dev.mavergreen.wezterm, the snapshot version as `CFBundleShortVersionString` and its dotted-numeric comparison key (`20261026.072628.1`) as `CFBundleVersion`. The product bundle keeps upstream's document types. `--acceptance` stages the private GUI-acceptance bundle, which differs only by declaring none, so the probe does not compete with installed applications for file types. The GUI probe refuses the product bundle. Build/stage receipts bind prepared inputs, executable hashes/modes/sizes and the staged Contents tree. Active canonical GUI sessions block rebuilding/restaging over their mapped artifacts. No installer or global trust/configuration change is involved.
+
+The native boundary tests (`tests/cocoa_compat.sh`, `tests/render_dependencies.sh`, `tests/notification_backend.sh`) run `cargo test --release`, so they reuse the product's release dependencies. On a freshly built root they compile 83, 40 and 8 crates, where the dev profile compiled the whole graph a second time.
 
 `build/check-local.sh --non-gui` executes every staged executable, records real CLI PTY output, checks locked package identities, runs the real binary compatibility guard and native boundary suites. Missing artifacts, failed checks and exit77 cannot count as acceptance. LLVM ranlib is explicitly selected because Apple's developer-tool stub cannot index the vendored OpenSSL archives with this external SDK; the regression creates, indexes, links and executes an actual archive.
 

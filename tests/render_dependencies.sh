@@ -17,10 +17,15 @@ for crate in metal objc2-metal; do
     fi
 done
 [ "$status" -eq 0 ] || exit "$status"
+# spec: PORT.md "Staging and local acceptance" -- the release profile, with the product's
+#       distro-defaults, reuses the product build's dependencies instead of compiling the graph again.
 for package in window wezterm-gui; do
-    case "$package" in window) selection=--lib; filter=mavericks_compat ;; *) selection='--bin=wezterm-gui'; filter=render_compat ;; esac
-    sh "$ROOT/build/environment.sh" cargo test --locked \
-        --target x86_64-apple-darwin -p "$package" "$selection" "$filter" -- --test-threads=1 \
+    case "$package" in
+        window) selection=--lib; features=; filter=mavericks_compat ;;
+        *) selection=--bin=wezterm-gui; features=--features=distro-defaults; filter=render_compat ;;
+    esac
+    sh "$ROOT/build/environment.sh" cargo test --release --locked \
+        --target x86_64-apple-darwin -p "$package" "$selection" $features "$filter" -- --test-threads=1 \
         > "$EVIDENCE_DIR/render-$package-tests.log" 2>&1 || { tail -55 "$EVIDENCE_DIR/render-$package-tests.log"; exit 1; }
     grep -E 'test result: ok\. [1-9][0-9]* passed; 0 failed' "$EVIDENCE_DIR/render-$package-tests.log"
 done

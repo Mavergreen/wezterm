@@ -11,7 +11,7 @@ if [ "${1:-}" != --in-environment ]; then
 fi
 mkdir -p "$EVIDENCE_DIR"
 cd "$SOURCE_DIR"
-"$CARGO" build --locked --target x86_64-apple-darwin -p security-framework --lib \
+"$CARGO" build --locked --release --target x86_64-apple-darwin -p security-framework --lib \
     --message-format=json-render-diagnostics > "$EVIDENCE_DIR/tls-artifacts.jsonl" 2> "$EVIDENCE_DIR/tls-build.log"
 "$PYTHON" - "$EVIDENCE_DIR/tls-artifacts.jsonl" "$TARGET_DIR/x86_64-apple-darwin/" > "$EVIDENCE_DIR/tls-artifacts.txt" <<'PY'
 import json, os, sys
@@ -49,7 +49,7 @@ fi
 TLS_CRATE_DIR=$CRATES_DIR/security-framework
 export TLS_CRATE_DIR
 "$RUSTC" --edition 2021 --test "$ROOT/tests/fixtures/tls.rs" --target x86_64-apple-darwin \
-    -C "linker=$CXX" -C debuginfo=0 -L "dependency=$TARGET_DIR/x86_64-apple-darwin/debug/deps" \
+    -C "linker=$CXX" -C debuginfo=0 -L "dependency=$TARGET_DIR/x86_64-apple-darwin/release/deps" \
     "$@" -o "$EVIDENCE_DIR/tls-tests"
 umask 077
 TLS_FIXTURE_DIR=$(mktemp -d "$WORK_ROOT/tls-fixtures.XXXXXX")
@@ -65,8 +65,8 @@ trap 'rm -f "$TLS_FIXTURE_DIR"/*; rmdir "$TLS_FIXTURE_DIR"' EXIT HUP INT TERM
     -extfile "$ROOT/tests/fixtures/tls.cnf" -extensions server_ext \
     -out "$TLS_FIXTURE_DIR/server.pem" >> "$EVIDENCE_DIR/tls-certificates.log" 2>&1
 /usr/bin/openssl x509 -in "$TLS_FIXTURE_DIR/ca.pem" -outform der -out "$TLS_FIXTURE_DIR/ca.der"
-find "$TARGET_DIR/x86_64-apple-darwin/debug/build" -path '*/openssl-build/install/lib/libssl.a' > "$EVIDENCE_DIR/tls-openssl-paths.txt"
-[ "$(wc -l < "$EVIDENCE_DIR/tls-openssl-paths.txt" | tr -d ' ')" = 1 ] || fail 'TLS fixture needs one unambiguous native vendored OpenSSL build; run build-local.sh first'
+find "$TARGET_DIR/x86_64-apple-darwin/release/build" -path '*/openssl-build/install/lib/libssl.a' > "$EVIDENCE_DIR/tls-openssl-paths.txt"
+[ "$(wc -l < "$EVIDENCE_DIR/tls-openssl-paths.txt" | tr -d ' ')" = 1 ] || fail 'TLS fixture needs one unambiguous native vendored OpenSSL build; run build-native.sh first'
 IFS= read -r ssl < "$EVIDENCE_DIR/tls-openssl-paths.txt"
 prefix=$(dirname "$(dirname "$ssl")")
 "$CC" -std=c99 "$ROOT/tests/fixtures/tls-server.c" -I"$prefix/include" \

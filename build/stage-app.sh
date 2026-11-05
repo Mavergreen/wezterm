@@ -1,21 +1,30 @@
 #!/bin/sh
 # platform: macOS-only -- stages the actual native product without installing it
+#   usage: stage-app.sh [--acceptance]
+#          Stages "Mavericks WezTerm.app" from the release build: the product bundle, or with
+#          --acceptance the private bundle for GUI acceptance, which differs only by declaring no
+#          document types. build/build-native.sh stages the product with --from-builder.
 set -eu
 REPO_ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 . "$REPO_ROOT/build/lib.sh"
 . "$REPO_ROOT/build/msc.sh"
 own_lock=false
 candidate=
-if [ "$#" -eq 0 ]; then
-    lock_recipe
-    own_lock=true
-elif [ "$#" -eq 1 ] && [ "$1" = --from-builder ]; then
+flavour=product
+case "$*" in
+    '') ;;
+    --acceptance) flavour=acceptance ;;
+    --from-builder) ;;
+    *) printf 'usage: stage-app.sh [--acceptance]\n' >&2; exit 2 ;;
+esac
+if [ "${1:-}" = --from-builder ]; then
     own_work_root
     [ -d "$WORK_ROOT/.lock" ] && [ -f "$WORK_ROOT/.lock/stage-owner" ] || fail 'builder lock missing'
     IFS= read -r owner_pid < "$WORK_ROOT/.lock/stage-owner"
     [ "$owner_pid" = "$PPID" ] || fail 'staging is not a child of the lock owner'
 else
-    fail 'usage: stage-app.sh'
+    lock_recipe
+    own_lock=true
 fi
 cleanup() {
     if [ -n "$candidate" ] && [ -f "$candidate/.owner" ]; then
@@ -43,24 +52,30 @@ new="$candidate/Mavericks WezTerm.app"
 mkdir "$new"
 cp -R "$SOURCE_DIR/assets/macos/WezTerm.app/Contents" "$new/Contents"
 mkdir -p "$new/Contents/MacOS" "$new/Contents/Resources/terminfo"
-for name in wezterm-gui wezterm wezterm-mux-server; do
-    cp -p "$TARGET_DIR/x86_64-apple-darwin/debug/$name" "$new/Contents/MacOS/$name"
+for name in wezterm-gui wezterm wezterm-mux-server strip-ansi-escapes; do
+    cp -p "$TARGET_DIR/x86_64-apple-darwin/release/$name" "$new/Contents/MacOS/$name"
 done
 cp -p "$SOURCE_DIR/assets/shell-integration/"* "$new/Contents/Resources/"
 cp -p "$SOURCE_DIR/LICENSE.md" "$new/Contents/Resources/LICENSE.md"
 cp -R "$SOURCE_DIR/assets/shell-completion" "$new/Contents/Resources/shell-completion"
 /usr/bin/tic -x -e wezterm -o "$new/Contents/Resources/terminfo" "$SOURCE_DIR/termwiz/data/wezterm.terminfo"
-"$PYTHON" - "$new/Contents/Info.plist" "$SOURCE_DIR/.tag" <<'PY'
+version=$(tr -d '\n' < "$SOURCE_DIR/.tag")
+"$PYTHON" - "$new/Contents/Info.plist" "$version" "$(comparison_key "$version")" "$flavour" <<'PY'
 import plistlib, sys
-path, tag = sys.argv[1:]
+path, version, key, flavour = sys.argv[1:]
 with open(path, 'rb') as stream:
     data = plistlib.load(stream) if hasattr(plistlib, 'load') else plistlib.readPlist(stream)
+# spec: claude-plugins/mavergreen/skills/mavergreen-conventions/SKILL.md "Sparkle updater" -- the human
+#       version is CFBundleShortVersionString, and CFBundleVersion is its dotted-numeric comparison key.
 data.update(CFBundleIdentifier='dev.mavergreen.wezterm', CFBundleName='Mavericks WezTerm',
             CFBundleDisplayName='Mavericks WezTerm', CFBundleExecutable='wezterm-gui',
-            LSMinimumSystemVersion='10.9', MavergreenBuildIdentity=open(tag).read().strip())
-data['CFBundleGetInfoString'] = 'Mavericks WezTerm ' + data['MavergreenBuildIdentity']
-# The private acceptance bundle must not compete for installed file-type associations.
-data.pop('CFBundleDocumentTypes', None)
+            LSMinimumSystemVersion='10.9', MavergreenBuildIdentity=version,
+            CFBundleShortVersionString=version, CFBundleVersion=key)
+data['CFBundleGetInfoString'] = 'Mavericks WezTerm ' + version
+# spec: PORT.md "Staging and local acceptance" -- the private acceptance bundle must not compete for
+#       installed file-type associations; the product keeps upstream's.
+if flavour == 'acceptance':
+    del data['CFBundleDocumentTypes']
 with open(path, 'wb') as stream:
     if hasattr(plistlib, 'dump'):
         plistlib.dump(data, stream)

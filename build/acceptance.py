@@ -47,7 +47,7 @@ def non_gui(repo, work, scripts):
     env = dict(os.environ)
     home = os.path.join(scratch, 'home')
     os.mkdir(home, 0o700)
-    env.update(HOME=home, XDG_CONFIG_HOME=os.path.join(home, 'config'), XDG_CACHE_HOME=os.path.join(home, 'cache'), XDG_DATA_HOME=os.path.join(home, 'data'), MAVERICKS_DEVIATIONS_ROOT=repo, MAVERICKS_ALLOW_ARCHS='x86_64', MAVERICKS_ALLOW_GUARDED_WEAK='', MAVERICKS_ALLOW_SELECTORS='')
+    env.update(HOME=home, XDG_CONFIG_HOME=os.path.join(home, 'config'), XDG_CACHE_HOME=os.path.join(home, 'cache'), XDG_DATA_HOME=os.path.join(home, 'data'))
     for key in ('WEZTERM_CONFIG_FILE', 'WEZTERM_CONFIG_DIR', 'WEZTERM_UNIX_DOMAIN', 'WEZTERM_PANE'):
         env.pop(key, None)
     binaries = []
@@ -59,14 +59,14 @@ def non_gui(repo, work, scripts):
         if staged['build']['build_identity'] not in read(version):
             raise ValueError('incorrect staged executable identity: ' + name)
         run([binary, '--help'], os.path.join(scratch, name + '-help.txt'), env)
-    run(['sh', os.path.join(scripts, 'assert_binary_compatible.sh')] + binaries, os.path.join(evidence, 'acceptance-binary-guard.log'), env)
+    run(['sh', os.path.join(repo, 'build/check-compat.sh'), '--app', app], os.path.join(evidence, 'acceptance-binary-guard.log'), env)
     cast = os.path.join(scratch, 'recording.cast')
     run(['/usr/bin/script', '-q', os.path.join(scratch, 'transcript.txt'), binaries[1], '--skip-config', 'record', '-o', cast, '--', '/bin/sh', '-c', 'printf "MAVERGREEN_STAGED_PTY_OK\\n"'], os.path.join(scratch, 'pty-driver.log'), env)
     lines = read(cast).splitlines()
     if json.loads(lines[0])['version'] != 2 or 'MAVERGREEN_STAGED_PTY_OK' not in ''.join(item[2] for item in (json.loads(line) for line in lines[1:]) if item[1] == 'o'):
         raise ValueError('real staged CLI PTY output was not recorded')
     checks = {}
-    # Compiler tests retain pinned SDK/cache paths; product executions alone need scratch HOME.
+    # spec: PORT.md, Native Cocoa startup -- compiler tests keep the pinned SDK/cache paths; only product executions get a scratch HOME.
     for name in ('cocoa_compat', 'render_dependencies', 'notification_backend', 'tls_compat'):
         log = os.path.join(evidence, 'acceptance-' + name + '.log')
         run(['sh', os.path.join(repo, 'tests', name + '.sh')], log)

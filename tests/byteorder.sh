@@ -7,7 +7,7 @@ REPO_ROOT=$ROOT
 [ -d "$CRATES_DIR/libssh-rs-sys" ] || { echo 'not prepared; byte-order test needs private libssh sources'; exit 77; }
 sh "$ROOT/build/prepare.sh" --verify
 include=
-for candidate in "$TARGET_DIR"/x86_64-apple-darwin/debug/build/libssh-rs-sys-*/out/include; do
+for candidate in "$TARGET_DIR"/x86_64-apple-darwin/release/build/libssh-rs-sys-*/out/include; do
     if [ -f "$candidate/libssh/libssh_version.h" ]; then include=$candidate; break; fi
 done
 [ -n "$include" ] || { echo 'not built; byte-order test needs generated libssh version header'; exit 77; }

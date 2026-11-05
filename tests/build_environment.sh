@@ -12,7 +12,7 @@ set -eu
 trees=${MAVERGREEN_TOOL_ROOT:-/}
 trees=${trees%/}/usr/local/mavergreen
 expect() {
-    [ "$2" = "$3" ] || { printf 'FAIL: %s is %s, not the pinned tree path %s\n' "$1" "$2" "$3" >&2; exit 1; }
+    [ "$2" = "$3" ] || { printf 'FAIL: %s is %s, not %s\n' "$1" "$2" "$3" >&2; exit 1; }
 }
 expect RUSTC "$RUSTC" "$trees/rust/bin/rustc"
 expect CARGO "$CARGO" "$trees/rust/bin/cargo"
@@ -24,6 +24,8 @@ expect NM "$NM" "$trees/clang22/bin/llvm-nm"
 expect STRINGS "$STRINGS" "$trees/clang22/bin/llvm-strings"
 expect MAKE "$MAKE" "$trees/make/bin/gmake"
 expect CMAKE "$CMAKE" "$trees/shipyard/bin/shipyard-cmake"
+expect CARGO_PROFILE_RELEASE_DEBUG "${CARGO_PROFILE_RELEASE_DEBUG-unset}" 0
+expect CARGO_INCREMENTAL "${CARGO_INCREMENTAL-unset}" 0
 expect 'cargo on PATH' "$(command -v cargo)" "$CARGO"
 expect 'rustc on PATH' "$(command -v rustc)" "$RUSTC"
 expect 'make on PATH' "$(command -v make)" "$trees/make/bin/make"
