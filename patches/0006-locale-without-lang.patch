@@ -1,0 +1,55 @@
+--- a/env-bootstrap/src/lib.rs
++++ b/env-bootstrap/src/lib.rs
+@@ -116,7 +116,7 @@
+ /// it to a UTF-8 version of the current locale known to NSLocale.
+ #[cfg(target_os = "macos")]
+ pub fn set_lang_from_locale() {
+-    use objc2_foundation::{NSLocale, NSString};
++    use objc2_foundation::{NSLocale, NSLocaleCountryCode, NSLocaleKey, NSLocaleLanguageCode, NSString};
+ 
+     fn lang_is_set() -> bool {
+         match std::env::var_os("LANG") {
+@@ -125,25 +125,27 @@
+         }
+     }
+ 
+-    if !lang_is_set() {
+-        unsafe fn nsstring_to_str<'a>(ns: &NSString) -> &'a str {
+-            let data = ns.UTF8String() as *const u8;
+-            let len = ns.len();
+-            let bytes = std::slice::from_raw_parts(data, len);
+-            std::str::from_utf8_unchecked(bytes)
+-        }
++    // NSLocale's languageCode and countryCode properties are macOS 10.12+.
++    // objectForKey: with the NSLocaleLanguageCode/NSLocaleCountryCode keys
++    // answers the same on every macOS since 10.4.
++    fn component(locale: &NSLocale, key: &NSLocaleKey) -> Option<String> {
++        let value = locale.objectForKey(key)?;
++        let value = value.downcast_ref::<NSString>()?;
++        Some(value.to_string())
++    }
+ 
++    if !lang_is_set() {
+         unsafe {
+             let locale = NSLocale::autoupdatingCurrentLocale();
+-            let lang_code_obj = locale.languageCode();
+-            let lang_code = nsstring_to_str(&lang_code_obj);
+-
+-            #[allow(deprecated)]
+-            let candidate = if let Some(country_code_obj) = locale.countryCode() {
+-                let country_code = nsstring_to_str(&country_code_obj);
+-                format!("{}_{}.UTF-8", lang_code, country_code)
+-            } else {
+-                format!("{}.UTF-8", lang_code)
++            let candidate = match (
++                component(&locale, NSLocaleLanguageCode),
++                component(&locale, NSLocaleCountryCode),
++            ) {
++                (Some(lang_code), Some(country_code)) => {
++                    format!("{}_{}.UTF-8", lang_code, country_code)
++                }
++                (Some(lang_code), None) => format!("{}.UTF-8", lang_code),
++                (None, _) => "en_US.UTF-8".to_string(),
+             };
+ 
+             let candidate_cstr =
