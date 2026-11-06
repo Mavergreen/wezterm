@@ -27,7 +27,6 @@ Each command is a two-line sh wrapper that `exec`s the app's own `Contents/MacOS
 ## Limits
 
 - **The GUI is not exercised in CI.** The 10.9 guest that CI installs every candidate into has no logged-in Aqua session, so CI checks the commands, the multiplexer, TLS and SSH, but never opens a window. The GUI has been checked by hand on a real 10.9 Mac, and the first release is checked that way too. INGREDIENTS.md declares the gap (`on-target:gui`) and what ends it.
-- With no `LANG` in its environment (from a launchd job, say), `wezterm start` and the other subcommands that hand over to `wezterm-gui` are killed before the GUI starts. Opening the app, or running `wezterm` from Terminal, is not affected. PORT.md "Locale without LANG" has the details.
 - See [PORT.md](PORT.md) for what each carried change does and does not cover.
 
 ## Building natively on 10.9
