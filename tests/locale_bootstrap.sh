@@ -8,6 +8,8 @@ bin=$TARGET_DIR/x86_64-apple-darwin/release
 for name in wezterm wezterm-gui wezterm-mux-server; do
     [ -x "$bin/$name" ] || { echo "not built; $name is missing"; exit 77; }
 done
+. "$ROOT/tests/support/host.sh"
+x86_64_or_skip "the no-LANG startup test"
 mkdir "$TEST_ROOT/home"
 bare() { env -i PATH=/usr/bin:/bin HOME="$TEST_ROOT/home" "$@"; }
 for name in wezterm wezterm-gui wezterm-mux-server; do

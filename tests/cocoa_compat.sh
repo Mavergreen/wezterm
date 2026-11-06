@@ -11,6 +11,8 @@ if [ "${1:-}" != --in-environment ]; then
 fi
 "$CC" "$ROOT/tests/fixtures/cocoa-availability.m" -framework AppKit -framework Foundation \
     -o "$EVIDENCE_DIR/cocoa-availability"
+. "$ROOT/tests/support/host.sh"
+x86_64_or_skip "the Cocoa availability probe and tests"
 "$EVIDENCE_DIR/cocoa-availability" > "$EVIDENCE_DIR/cocoa-availability.txt"
 cat "$EVIDENCE_DIR/cocoa-availability.txt"
 cd "$SOURCE_DIR"

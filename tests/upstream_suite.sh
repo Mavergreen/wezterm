@@ -34,6 +34,39 @@ PY
     assert_run "$expected" "$@"
 }
 
+# spec: PORT.md "Upstream's own tests" -- a proc macro's test binary is host code. Where the host is
+#       not the target, cargo runs it itself rather than through the target's capture runner.
+mkdir -p "$out/manifest-case/capture" "$out/manifest-case/target/x86_64-apple-darwin/release/deps" \
+    "$out/manifest-case/target/release/deps"
+manifest_case() {
+    "$PYTHON" - "$out/manifest-case" "$1" > "$out/manifest-case/messages.jsonl" <<'PY'
+import json, sys
+d, host_captured = sys.argv[1:]
+def artifact(name, kind, exe):
+    return json.dumps({'reason': 'compiler-artifact', 'profile': {'test': True}, 'executable': exe,
+                       'package_id': 'path+file:///src/%s#0.1.0' % name, 'target': {'kind': [kind], 'name': name}})
+target = d + '/target/x86_64-apple-darwin/release/deps/lib-1'
+host = d + '/target/release/deps/derive-1'
+print(artifact('lib', 'lib', target))
+print(artifact('derive', 'proc-macro', host))
+json.dump({'exe': target, 'args': [], 'cwd': d, 'env': {}}, open(d + '/capture/lib-1.json', 'w'))
+if host_captured == 'target-only':
+    print(artifact('stray', 'lib', d + '/target/x86_64-apple-darwin/release/deps/stray-1'))
+PY
+    for exe in target/x86_64-apple-darwin/release/deps/lib-1 target/release/deps/derive-1 \
+        target/x86_64-apple-darwin/release/deps/stray-1; do
+        : > "$out/manifest-case/$exe"
+    done
+}
+manifest_case host
+assert_run 0 "$PYTHON" "$runner" manifest case "$out/manifest-case/messages.jsonl" "$out/manifest-case/capture"
+assert_output '"key": "lib/lib/lib"'
+assert_output 'derive/proc-macro/derive is a host test binary'
+[ "$(grep -c '"set": "case"' "$TEST_ROOT/output")" = 1 ] || fail "the manifest must hold only the captured target binary: $(cat "$TEST_ROOT/output")"
+manifest_case target-only
+assert_run 2 "$PYTHON" "$runner" manifest case "$out/manifest-case/messages.jsonl" "$out/manifest-case/capture"
+assert_output 'cargo built stray/lib/stray'
+pass 'the manifest leaves out host test binaries cargo ran itself, and refuses an uncaptured target binary'
 # spec: PORT.md "Upstream's own tests" -- on-target has the test binaries but no build root, so pack
 #       copies the target's binaries beside a manifest whose paths are relative to it; the build
 #       host's paths in the recorded variables do not exist there, and its toolchain is not there.
@@ -107,11 +140,26 @@ build_set workspace --workspace --features wezterm-gui/distro-defaults
 # spec: PORT.md "Upstream's own tests" -- upstream's CI also tests wezterm-escape-parser alone,
 #       with its default (no_std) features.
 build_set no-std -p wezterm-escape-parser
-# spec: PORT.md "Upstream's own tests" -- the pack is what runs below, as it would on a machine
-#       that has the test binaries but no build root.
+"$PYTHON" - "$out/manifest.jsonl" <<'PY'
+import json, os, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+sets = sorted(set(row['set'] for row in rows))
+if sets != ['no-std', 'workspace']:
+    sys.exit('FAIL: the manifest holds sets %r, not no-std and workspace' % sets)
+missing = [row['exe'] for row in rows if not os.access(row['exe'], os.X_OK)]
+if missing:
+    sys.exit('FAIL: the manifest names test binaries that are not there: %r' % missing[:5])
+counts = ', '.join('%s %d' % (name, len([r for r in rows if r['set'] == name])) for name in sets)
+print('manifest: %d test binaries (%s)' % (len(rows), counts))
+PY
+pass 'cargo built every upstream test binary through the capture runner, which ran none of them'
+# spec: PORT.md "Upstream's own tests" -- the pack is what a cross host hands to on-target, and what
+#       runs below on an x86_64 host.
 "$PYTHON" "$runner" pack "$out/manifest.jsonl" "$out/packed" > "$out/pack.log" 2>&1 ||
     { cat "$out/pack.log"; fail 'the upstream test binaries did not pack'; }
 cat "$out/pack.log"
+. "$ROOT/tests/support/host.sh"
+x86_64_or_skip "upstream's test binaries (the pack above is what a cross host hands to on-target)"
 fixture_case 0 cargo 'fixture/lib/fixture fails
 ' ''
 assert_output 'binaries 1, tests listed 3, passed 2, failed 0, ignored 0, excluded 1'

@@ -75,6 +75,12 @@ def manifest(test_set, messages, capture_dir):
             die('two test binaries for %s in set %s' % (key, test_set))
         keys.add(key)
         record = captured.pop(exe, None)
+        if record is None and TARGET not in exe.split(os.sep):
+            # platform: cargo applies a target's runner to host binaries only when the host is that
+            #           target; on another host it runs a proc macro's test binary itself
+            sys.stderr.write('upstream-tests: %s is a host test binary, which cargo ran itself (%s)\n'
+                             % (key, exe))
+            continue
         if record is None:
             die('cargo built %s (%s) but never ran it' % (key, exe))
         if record['args']:
@@ -96,7 +102,7 @@ def pack(manifest_path, directory):
     for row in rows:
         if TARGET not in row['exe'].split(os.sep):
             # platform: a proc macro's test binary is host code, which loads the toolchain's libstd
-            #           and has no tests
+            #           and has no tests; a cross host never captures it at all
             sys.stderr.write('upstream-tests: %s is a host test binary, left out of the pack (%s)\n'
                              % (row['key'], row['exe']))
             continue

@@ -6,6 +6,8 @@ REPO_ROOT=$ROOT
 . "$ROOT/build/lib.sh"
 bin=$TARGET_DIR/x86_64-apple-darwin/release
 [ -x "$bin/wezterm" ] && [ -x "$bin/wezterm-mux-server" ] || { echo 'not built; CLI PTY test needs both executables'; exit 77; }
+. "$ROOT/tests/support/host.sh"
+x86_64_or_skip "the CLI PTY test"
 mkdir -p "$EVIDENCE_DIR"
 "$bin/wezterm" --version > "$EVIDENCE_DIR/cli-version.txt"
 "$bin/wezterm-mux-server" --version > "$EVIDENCE_DIR/mux-version.txt"

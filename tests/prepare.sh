@@ -112,7 +112,8 @@ for short in rust rust-cross; do
 done
 : > "$STUB_CARGO_LOG"
 assert_run 1 sh "$fixture/build/prepare.sh"
-assert_output "rust: pinned at $rust_pin, but 0.0.1 is installed"
+case "$(sh "$ROOT/build/tools.sh" tree rust 2>&1)" in *rust-cross*) rust_short=rust-cross ;; *) rust_short=rust ;; esac
+assert_output "$rust_short: pinned at $rust_pin, but 0.0.1 is installed"
 [ ! -s "$STUB_CARGO_LOG" ] || fail "preparation ran cargo from a rust tree that is not at its pin: $(cat "$STUB_CARGO_LOG")"
 for short in rust rust-cross; do cp "$TEST_ROOT/rust.plist" "$tools/usr/local/mavergreen/$short/mavergreen.plist"; done
 pass "cargo comes only from the pinned rust tree under MAVERGREEN_TOOL_ROOT, never CARGO or PATH"

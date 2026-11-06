@@ -73,6 +73,8 @@ prefix=$(dirname "$(dirname "$ssl")")
     "$ssl" "$prefix/lib/libcrypto.a" -pthread -o "$EVIDENCE_DIR/tls-server"
 TLS_SERVER=$EVIDENCE_DIR/tls-server
 export TLS_SERVER
+. "$ROOT/tests/support/host.sh"
+x86_64_or_skip "the TLS tests"
 "$EVIDENCE_DIR/tls-tests" --test-threads=1 --nocapture > "$EVIDENCE_DIR/tls-tests.log" 2>&1 || { tail -70 "$EVIDENCE_DIR/tls-tests.log"; exit 1; }
 grep -E 'test result: ok\. [1-9][0-9]* passed; 0 failed' "$EVIDENCE_DIR/tls-tests.log"
 echo 'PASS: optional TLS API resolution and real local trust/hostname/SNI/protocol checks'

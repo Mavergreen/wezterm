@@ -20,6 +20,15 @@ Preparation verifies immutable source and submodule archives, applies explained 
 
 A changed recipe requires `sh build/prepare.sh` again. Modified prepared sources/crates are rejected rather than discarded: save those edits outside the owned preparation directories first. Development builds disable debug symbols and incremental compilation to conserve disk. The native environment explicitly selects the pinned SDK/compiler and LLVM `ar`/`ranlib`, without changing installed toolchains.
 
+On a modern Mac with the pinned `rust-cross`, `clang22-cross` and `make` products installed, the same recipe cross-builds the same x86_64 10.9 executables and stages the same bundle:
+
+```sh
+sh build/prepare.sh
+sh build/build-cross.sh
+```
+
+The target is compiled by `clang22-cross` against the pinned 10.9 SDK; build scripts and proc macros are built for the host with `/usr/bin/clang` and the host's own SDK. Nothing x86_64 runs there: tests that execute shipped code exit 77 (skipped) and run natively on Mac OS X 10.9 instead.
+
 ## Isolated GUI acceptance
 
 Keep the desktop unlocked while capturing a window. Stage the private acceptance bundle (the product's, without its document types), then start it through LaunchServices:

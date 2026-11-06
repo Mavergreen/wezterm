@@ -73,6 +73,8 @@ info acceptance
 pass 'the acceptance bundle differs from the product only by dropping its document types'
 sh "$ROOT/build/stage-app.sh"
 info product
+. "$ROOT/tests/support/host.sh"
+x86_64_or_skip "running the staged executables"
 mkdir -p "$WORK_ROOT/app-test-home"
 HOME=$WORK_ROOT/app-test-home
 XDG_CACHE_HOME=$HOME/cache

@@ -14,6 +14,8 @@ if grep '^objc2-user-notifications v' "$EVIDENCE_DIR/notification-tree.txt" >/de
     echo 'FAIL: Mavericks product still requires UserNotifications framework'
     exit 1
 fi
+. "$ROOT/tests/support/host.sh"
+x86_64_or_skip "the notification backend's tests"
 # spec: PORT.md "Staging and local acceptance" -- the release profile reuses the product build's dependencies.
 sh "$ROOT/build/environment.sh" cargo test --release --locked \
     --target x86_64-apple-darwin -p wezterm-toast-notification --lib \

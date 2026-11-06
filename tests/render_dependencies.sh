@@ -17,6 +17,8 @@ for crate in metal objc2-metal; do
     fi
 done
 [ "$status" -eq 0 ] || exit "$status"
+. "$ROOT/tests/support/host.sh"
+x86_64_or_skip "the renderer's tests"
 # spec: PORT.md "Staging and local acceptance" -- the release profile, with the product's
 #       distro-defaults, reuses the product build's dependencies instead of compiling the graph again.
 for package in window wezterm-gui; do

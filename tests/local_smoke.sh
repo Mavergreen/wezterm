@@ -6,6 +6,8 @@ set -eu
 REPO_ROOT=$ROOT
 . "$ROOT/build/lib.sh"
 [ -f "$WORK_ROOT/prepared.json" ] || { echo 'not prepared; local smoke needs native artifacts'; exit 77; }
+. "$ROOT/tests/support/host.sh"
+x86_64_or_skip "local acceptance"
 sh "$ROOT/build/check-local.sh" --non-gui
 assert_run 1 sh "$ROOT/build/check-local.sh" --gui --collect "$TEST_ROOT"
 assert_output 'GUI evidence must be inside the owned evidence directory'

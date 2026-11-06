@@ -17,4 +17,6 @@ sh "$ROOT/build/environment.sh" sh -c '
         -I "$CRATES_DIR/libssh-rs-sys/vendored/include" -I "$1" \
         "$REPO_ROOT/tests/fixtures/byteorder.c" -o "$EVIDENCE_DIR/byteorder"
 ' sh "$include"
+. "$ROOT/tests/support/host.sh"
+x86_64_or_skip "the byte-order probe"
 "$EVIDENCE_DIR/byteorder"
