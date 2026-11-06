@@ -1,0 +1,100 @@
+--- a/wezterm/src/asciicast.rs
++++ b/wezterm/src/asciicast.rs
+@@ -333,8 +333,17 @@
+     Stdout(Vec<u8>),
+     /// Child process terminated
+     Terminated(portable_pty::ExitStatus),
++    /// The child tty will produce no more output
++    Eof,
+ }
+ 
++/// How long to keep reading the child tty's output once the child has
++/// exited.  Its last output is usually already waiting to be read, and
++/// arrives as soon as the reader thread runs; the limit matters only when
++/// another process, such as a job the child left in the background, keeps
++/// the tty open.
++const DRAIN_AFTER_EXIT: Duration = Duration::from_secs(2);
++
+ #[derive(Debug, Parser, Clone)]
+ pub struct RecordCommand {
+     /// Start in the specified directory, instead of
+@@ -406,16 +415,24 @@
+ 
+         {
+             let tx = tx.clone();
+-            std::thread::spawn(move || -> anyhow::Result<()> {
++            std::thread::spawn(move || {
+                 let mut buf = [0u8; 8192];
+                 loop {
+-                    let size = child_output.read(&mut buf)?;
++                    // Once every slave is closed, the master reads end of
++                    // file on macOS and fails with EIO on Linux.
++                    let size = match child_output.read(&mut buf) {
++                        Ok(size) => size,
++                        Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
++                        Err(_) => 0,
++                    };
+                     if size == 0 {
+                         break;
+                     }
+-                    tx.send(Message::Stdout(buf[0..size].to_vec()))?;
++                    if tx.send(Message::Stdout(buf[0..size].to_vec())).is_err() {
++                        return;
++                    }
+                 }
+-                Ok(())
++                tx.send(Message::Eof).ok();
+             });
+         }
+ 
+@@ -449,10 +466,30 @@
+         let mut buffer = vec![];
+         let mut writer = pair.master.take_writer()?;
+ 
+-        for msg in rx {
++        // The child's exit can be reported before its last output is read,
++        // so keep reading until the output ends, for at most
++        // DRAIN_AFTER_EXIT after the exit.
++        let mut output_ended = false;
++        let mut drain_until: Option<Instant> = None;
++        loop {
++            let msg = match drain_until {
++                None => match rx.recv() {
++                    Ok(msg) => msg,
++                    Err(_) => break,
++                },
++                Some(deadline) => {
++                    let left = deadline.saturating_duration_since(Instant::now());
++                    match rx.recv_timeout(left) {
++                        Ok(msg) => msg,
++                        Err(_) => break,
++                    }
++                }
++            };
+             match msg {
+                 Message::Stdin(data) => {
+-                    writer.write_all(&data)?;
++                    if child_status.is_none() {
++                        writer.write_all(&data)?;
++                    }
+                 }
+                 Message::Stdout(mut data) => {
+                     let elapsed = first_output.elapsed().as_secs_f32();
+@@ -485,7 +522,16 @@
+                 }
+                 Message::Terminated(status) => {
+                     child_status.replace(status);
+-                    break;
++                    if output_ended {
++                        break;
++                    }
++                    drain_until = Some(Instant::now() + DRAIN_AFTER_EXIT);
++                }
++                Message::Eof => {
++                    output_ended = true;
++                    if child_status.is_some() {
++                        break;
++                    }
+                 }
+             }
+         }
