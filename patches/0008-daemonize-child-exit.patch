@@ -1,0 +1,76 @@
+--- a/wezterm-mux-server/src/daemonize.rs
++++ b/wezterm-mux-server/src/daemonize.rs
+@@ -85,17 +85,20 @@
+         Fork::Parent(pid) => {
+             let mut status = 0;
+             unsafe { libc::waitpid(pid, &mut status, 0) };
+-            std::process::exit(0);
++            // The child reports its own error; pass on that it had one.
++            let ok = libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0;
++            std::process::exit(if ok { 0 } else { 1 });
+         }
+         Fork::Child(_) => {}
+     }
+ 
+-    setsid()?;
+-    match fork()? {
+-        Fork::Parent(_) => {
+-            std::process::exit(0);
+-        }
+-        Fork::Child(_) => {}
++    if let Err(err) = setsid() {
++        exit_forked_child(err);
++    }
++    match fork() {
++        Ok(Fork::Parent(_)) => unsafe { libc::_exit(0) },
++        Ok(Fork::Child(_)) => {}
++        Err(err) => exit_forked_child(err),
+     }
+ 
+     let pid_file_fd = pid_file.map(|mut pid_file| {
+@@ -119,6 +122,31 @@
+     Ok(pid_file_fd)
+ }
+ 
++/// Reports `err` and ends a process that `daemonize` forked, before it
++/// execs, with `_exit(2)`.
++///
++/// The process that forked may have had other threads (loading the
++/// configuration starts notify's FSEvents thread on macOS), so until it
++/// execs, the forked child must not depend on state that the fork copied
++/// from them.  `exit(3)` would: it runs the thread-local destructors, and on
++/// macOS the one for the main thread's handle releases the dispatch semaphore
++/// that std parks that thread on.  If the thread parked before the fork, the
++/// semaphore owns a Mach semaphore, which the child does not inherit, and
++/// libdispatch kills the child with SIGILL ("BUG IN LIBDISPATCH: flawed
++/// group/semaphore logic").  Nor does it use `log`, whose lock another
++/// thread may have held at the fork.
++pub fn exit_forked_child(err: impl std::fmt::Display) -> ! {
++    let message = format!("wezterm-mux-server: {err:#}\n");
++    unsafe {
++        libc::write(
++            libc::STDERR_FILENO,
++            message.as_ptr() as *const libc::c_void,
++            message.len(),
++        );
++        libc::_exit(1)
++    }
++}
++
+ pub fn set_cloexec(fd: RawFd, enable: bool) {
+     unsafe {
+         let flags = libc::fcntl(fd, libc::F_GETFD);
+--- a/wezterm-mux-server/src/main.rs
++++ b/wezterm-mux-server/src/main.rs
+@@ -181,7 +181,10 @@
+                 }
+             }
+ 
+-            return Err(anyhow::anyhow!("failed to re-exec: {:?}", cmd.exec()));
++            // This is the process that daemonize forked: it must not
++            // return to main, whose exit(3) it cannot survive.
++            let err = cmd.exec();
++            daemonize::exit_forked_child(format!("failed to re-exec: {:?}", err));
+         }
+     }
+ 
