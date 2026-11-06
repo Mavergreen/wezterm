@@ -6,9 +6,9 @@
 #          the checkout's dist/) after checking it against DIST/SHA256SUMS, then checks the installed
 #          product without a GUI session: the manifest and app name VERSION, `mavergreen check` passes,
 #          every command the pkg puts on PATH runs from a login shell with no LANG and prints its usage,
-#          `wezterm ls-fonts` run from / reaches the app's wezterm-gui through the PATH wrapper, the
-#          app's terminfo describes wezterm through TERMINFO_DIRS, `wezterm record` runs a shell in a
-#          PTY that sees a UTF-8 LANG though wezterm was started with none, a mux server runs a
+#          `wezterm ls-fonts` run from / with no LANG reaches the app's wezterm-gui through the PATH
+#          wrapper, the app's terminfo describes wezterm through TERMINFO_DIRS, `wezterm record` runs a
+#          shell in a PTY that sees a UTF-8 LANG though wezterm was started with none, a mux server runs a
 #          fixture shell that answers a nonce through the CLI, a second mux server reaches the first over
 #          TLS (and refuses an untrusted CA and a wrong host name), a third reaches a private sshd it
 #          starts on 127.0.0.1 through SSH domains with each backend, libssh and libssh2 (and refuses
@@ -114,16 +114,19 @@ commands() {
 }
 # spec: INGREDIENTS.md "Commands on PATH" -- upstream finds wezterm-gui beside the path wezterm was
 #       started by, which the wrapper makes the app's own Contents/MacOS
-# platform: with no LANG, wezterm dies before it reaches wezterm-gui (PORT.md "Locale without LANG"),
-#           so this one has the LANG a Terminal window gives it
+# spec: PORT.md "Locale without LANG" -- with no LANG, as from launchd, the hand-over still reaches
+#       wezterm-gui; a SIGKILL (status 137) is the guarded-descriptor crash described there
 # platform: another executable behind the wrapper may never exit (wezterm-mux-server takes ls-fonts or
 #           record for a program to run), so these run bounded, the shell exec'ing the command so that
 #           it is the process bounded kills
 sibling_gui() {
-    out=$(bounded 60 L 'cd / && LANG=en_US.UTF-8 exec wezterm --skip-config ls-fonts' < /dev/null 2>&1) &&
-        printf '%s\n' "$out" | grep -q '^Primary font:' ||
+    st=0
+    out=$(bounded 60 L 'cd / && exec wezterm --skip-config ls-fonts' < /dev/null 2>&1) || st=$?
+    [ "$st" != 137 ] ||
+        { printf '%s\n' "$out" | tail -n 5; echo 'wezterm ls-fonts, started with no LANG, was killed (status 137)'; return 1; }
+    [ "$st" = 0 ] && printf '%s\n' "$out" | grep -q '^Primary font:' ||
         { printf '%s\n' "$out" | tail -n 5; echo 'wezterm ls-fonts did not reach wezterm-gui beside it'; return 1; }
-    echo 'wezterm ls-fonts, run from /, reached wezterm-gui'
+    echo 'wezterm ls-fonts, run from / with no LANG, reached wezterm-gui'
 }
 terminfo() {
     t=$app/Contents/Resources/terminfo

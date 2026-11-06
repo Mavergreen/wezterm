@@ -1,0 +1,33 @@
+--- a/pty/src/unix.rs
++++ b/pty/src/unix.rs
+@@ -142,12 +142,17 @@
+ /// also need to make an effort to clean up the mess.
+ ///
+ /// This function enumerates the open filedescriptors in the current process
+-/// and then will forcibly call close(2) on each open fd that is numbered
+-/// 3 or higher, effectively closing all descriptors except for the stdio
+-/// streams.
++/// and then marks each open fd that is numbered 3 or higher close-on-exec,
++/// so that the exec(2) that follows closes all descriptors except for the
++/// stdio streams.
++///
++/// It does not close(2) them itself: on macOS, libdispatch can hold a
++/// guarded descriptor (its kqueue, once Foundation has run, as NSLocale
++/// does when LANG is unset), and closing a guarded descriptor kills the
++/// process with EXC_GUARD.  Such a descriptor is already close-on-exec.
+ ///
+ /// The implementation of this function relies on `/dev/fd` being available
+-/// to provide the list of open fds.  Any errors in enumerating or closing
++/// to provide the list of open fds.  Any errors in enumerating or marking
+ /// the fds are silently ignored.
+ pub fn close_random_fds() {
+     // FreeBSD, macOS and presumably other BSDish systems have /dev/fd as
+@@ -170,7 +175,7 @@
+         }
+         for fd in fds {
+             unsafe {
+-                libc::close(fd);
++                libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+             }
+         }
+     }

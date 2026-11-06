@@ -5,13 +5,13 @@
 #          with an installer that lays the pkg into a scratch volume and runs its scripts there, so
 #          nothing reaches the real system. The check passes on that pkg, with --repo-tests reaching a
 #          stand-in shipyard through build/msc.sh while SHIPYARD_SCRIPTS is empty, and fails on a pkg whose
-#          SHA256SUMS line is wrong (before installing), on a version the pkg is not, on a command
-#          that runs the wrong executable (its version and its --help), on a command missing from
-#          PATH, on a wezterm started through a symlink with no wezterm-gui beside it, on an app
-#          without its terminfo, on a wezterm whose record child sees no UTF-8 LANG, on a fixture
-#          shell that never answers (over the mux and over SSH), on a fixture shell that kills its mux
-#          server, and on SSH domains whose unauthorized client key sshd accepts. No sshd it starts
-#          may outlive it.
+#          SHA256SUMS line is wrong (before installing), on a version the pkg is not, on a wezterm
+#          killed when it hands ls-fonts to wezterm-gui with no LANG, on a command that runs the wrong
+#          executable (its version and its --help), on a command missing from PATH, on a wezterm
+#          started through a symlink with no wezterm-gui beside it, on an app without its terminfo,
+#          on a wezterm whose record child sees no UTF-8 LANG, on a fixture shell that never answers
+#          (over the mux and over SSH), on a fixture shell that kills its mux server, and on SSH
+#          domains whose unauthorized client key sshd accepts. No sshd it starts may outlive it.
 set -eu
 . "$(dirname "$0")/support/common.sh"
 REPO_ROOT=$ROOT
@@ -72,6 +72,10 @@ for b in ${INSTALLER_BREAK:-}; do
         terminfo) rm -r "$app/Contents/Resources/terminfo" ;;
         lang) sed 's/^exec /LANG=C; export LANG; exec /' "$bin/wezterm" > "$bin/wezterm.new" &&
             cat "$bin/wezterm.new" > "$bin/wezterm" && rm "$bin/wezterm.new" ;;
+        # platform: stands in for the guarded-descriptor crash (PORT.md "Locale without LANG"): a
+        #           hand-over to wezterm-gui with no LANG is killed, as unpatched close_random_fds was
+        nolang) sed 's/^exec /case " $* " in *" ls-fonts "*) [ -n "${LANG:-}" ] || kill -KILL $$ ;; esac; exec /' \
+            "$bin/wezterm" > "$bin/wezterm.new" && cat "$bin/wezterm.new" > "$bin/wezterm" && rm "$bin/wezterm.new" ;;
     esac
 done
 EOF
@@ -136,10 +140,12 @@ other=$TEST_ROOT/other
 mkdir "$other"
 cp "$dist/wezterm-$V.pkg" "$other/wezterm-$V.9.pkg"
 (cd "$other" && shasum -a 256 "wezterm-$V.9.pkg") > "$other/SHA256SUMS"
-run 1 "$other" "$V.9"
+INSTALLER_BREAK=nolang run 1 "$other" "$V.9"
 assert_output 'FAIL manifest'
 assert_output "says version $V, not $V.9"
-pass 'the release check fails a pkg SHA256SUMS does not vouch for, without installing it, and a pkg that is not the version asked for'
+assert_output 'FAIL sibling-gui'
+assert_output 'wezterm ls-fonts, started with no LANG, was killed (status 137)'
+pass 'the release check fails a pkg SHA256SUMS does not vouch for, without installing it, a pkg that is not the version asked for, and a wezterm killed handing ls-fonts to wezterm-gui with no LANG'
 
 printf '%s\n' '#!/bin/sh' "printf 'mux-echo ready\\n'" 'cat > /dev/null' > "$tree/tests/fixtures/mux-echo.sh"
 run 1 "$dist" "$V"
