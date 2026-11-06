@@ -1,6 +1,8 @@
 #!/bin/sh
 # platform: host-agnostic
 . "$(dirname "$0")/support/common.sh"
+. "$ROOT/tests/support/rust.sh"
+pinned_cargo_or_skip 'the crate patch test'
 mkdir -p "$TEST_ROOT/project/src" "$TEST_ROOT/cairo/src" "$TEST_ROOT/libssh/src"
 : > "$TEST_ROOT/project/src/lib.rs"
 : > "$TEST_ROOT/cairo/src/lib.rs"
@@ -21,7 +23,7 @@ cairo-sys-rs = { path = "../cairo" }
 debug = false
 EOF
 assert_run 0 "${PYTHON:-python}" "$ROOT/build/add-crate-patch.py" "$TEST_ROOT/project/Cargo.toml" libssh-rs-sys ../libssh
-assert_run 0 sh -c 'out=$1; shift; "$@" > "$out"' sh "$TEST_ROOT/metadata.json" "${CARGO:-cargo}" metadata --offline --format-version 1 --manifest-path "$TEST_ROOT/project/Cargo.toml"
+assert_run 0 sh -c 'out=$1; shift; "$@" > "$out"' sh "$TEST_ROOT/metadata.json" "$cargo" metadata --offline --format-version 1 --manifest-path "$TEST_ROOT/project/Cargo.toml"
 "${PYTHON:-python}" - "$TEST_ROOT/metadata.json" "$TEST_ROOT" <<'PY'
 import json, os, sys
 packages = json.load(open(sys.argv[1]))['packages']

@@ -6,8 +6,9 @@ REPO_ROOT=$ROOT
 . "$ROOT/build/lib.sh"
 guard=$ROOT/build/check-compat.sh
 [ -f "$guard" ] || fail 'build/check-compat.sh is missing'
-CL=$(sh "$ROOT/build/tools.sh" tree --root "$TOOL_ROOT" clang22) ||
-    fail 'the pinned clang22 is not installed (build/tools.sh tree clang22)'
+. "$ROOT/tests/support/pinned.sh"
+pinned_or_skip clang22 'the compat guard test'
+CL=$pinned
 SDK=$(sh "$SHIPYARD_SCRIPTS/fetch_sdk.sh" --arch x86_64)
 link() {
     out=$1; shift
