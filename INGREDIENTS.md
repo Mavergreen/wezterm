@@ -1,6 +1,6 @@
 # Build ingredients
 
-This repository builds and packages natively on Mac OS X 10.9. It does not publish yet. Release automation and automatically maintained ingredient pins must be established before a first release; none is claimed to exist here.
+This repository builds and packages natively on Mac OS X 10.9, and cross-builds on a modern Mac in CI (see CI, below). It has not published a release yet.
 
 | Input | Identity / provenance | Update policy |
 |---|---|---|
@@ -15,7 +15,7 @@ This repository builds and packages natively on Mac OS X 10.9. It does not publi
 | Shipyard and pinned 10.9 SDK | Installed shared facilities resolved by canonical build/msc.sh; fetch_sdk.sh verifies the SDK pin | Shared family maintenance; SDK bytes are not modified |
 | Tests | POSIX shell, Python 2.7/3-compatible standard library, installed family tools | No downloaded test framework or Homebrew dependency |
 
-No ingredient-bump workflow exists in this local-only stage.
+`.github/workflows/repackage-on-ingredient-bump.yml` dispatches a `-mavericks.N+1` repackage when the Rust, clang22 or make pin moves on `main`, unless the upstream pin `components/wezterm/version` moved with it, which makes the push a new upstream release. Longboat builds nothing shipped, and `components/clang22/linux-sha256` only fetches clang22's Mach-O readers on Linux, so neither repackages.
 
 The shared preset groups every Mavergreen release (Rust, clang22, make, Longboat) into one Renovate PR, and a green build merges it.
 
@@ -64,6 +64,35 @@ The pkg installs the app as `/Applications/Mavericks WezTerm.app` and the tree `
 
 `build/check-release-on-10.9.sh VERSION` installs `dist/wezterm-VERSION.pkg` on Mac OS X 10.9 after checking it against `dist/SHA256SUMS`, and checks the installed product without a GUI session: the manifest and app carry VERSION, `mavergreen check` passes, each command on PATH runs from a login shell with no `LANG` and prints its usage for `--help`, `wezterm ls-fonts` run from `/` reaches the app's `wezterm-gui` through the PATH wrapper (with a `LANG`: see PORT.md "Locale without LANG"), `infocmp` and `tput` read the app's `wezterm` terminfo entry through `TERMINFO_DIRS`, a shell that `wezterm record` runs in a PTY (through `script`) prints a nonce and sees a UTF-8 `LANG` though `wezterm` was started with none, a mux server runs `tests/fixtures/mux-echo.sh` and answers a nonce sent through `wezterm cli`, and every server stops on SIGTERM. For TLS it makes a CA, a server certificate for `localhost` and a client certificate whose CN is the user, which is what the mux server requires, with 10.9's own `openssl` and `tests/fixtures/tls.cnf`. A second mux server then reaches the first through a TLS client domain and passes the nonce, and refuses a server signed by another CA and a host name the certificate does not carry (`tests/fixtures/mux.lua`). For SSH it starts a private, unprivileged `/usr/sbin/sshd` on 127.0.0.1 and a free port, with a fresh host key, client keys, `authorized_keys`, config, pid file and log in its own temporary directory, so neither `~/.ssh`, the system's sshd nor the user's agent takes part. A third mux server has SSH domains for it without a remote mux, each naming its own identity file and `known_hosts`, with `ssh_backend = "LibSsh"` and with `"Ssh2"`, so both the vendored libssh and libssh2 run. With each backend the nonce comes back, WezTerm says which backend it used, and sshd's log names that client (`libssh_…` or `libssh2_…`). Each backend refuses a host key other than the one in `known_hosts` before it offers a key, and fails with a client key sshd does not authorize. Without a GUI a refusal shows only in the pane: libssh prints `Host key verification failed` or `PUBLIC_KEY: Denied`; libssh2 prints the first, but for an unauthorized key asks for that key's passphrase and waits, though the key has none. A host missing from `known_hosts` would likewise wait for an answer to whether to trust it, so the check writes `known_hosts` first. Once the mux server stops, sshd must have no session left and stop on SIGTERM. Only Mavergreen's OpenSSH 10.6 sshd has run it; 10.9's own sshd has not. `--repo-tests` then runs the suite with shipyard's `run-repo-tests.sh`. It leaves WezTerm installed. `tests/release_check.sh` runs it against the staged product's pkg installed into a scratch volume, and shows it failing on a wrong SHA256SUMS line (without installing), a version the pkg is not, a command that runs the wrong executable (its version and its `--help`) or is missing from PATH, a `wezterm` started through a symlink with no `wezterm-gui` beside it, an app without its terminfo, a `wezterm` that hands its `record` child `LANG=C`, a fixture shell that never answers (over the mux and over SSH), one that kills its server, a TLS domain that accepts an untrusted server and SSH domains whose unauthorized key sshd accepts; no sshd the check starts may outlive it.
 
+## CI
+
+`.github/workflows/release.yml` runs on every push to `main`, every pull request and a dispatch. Only `build` needs macOS (see the `macos-runner` deviation below); every other job runs on Linux.
+
+- `ver` derives `UPSTREAM_VERSION` from the pin, resolves the version and whether this run publishes, and refuses a snapshot older than the previous release's (`build/check-snapshot-order.sh`).
+- `build` (macos-26, arm64) installs the pinned Longboat and its 10.9 SDK, then clang22-cross, rust-cross and make, each verified against its release's `SHA256SUMS`. It cross-builds and stages the app (`build/build-cross.sh`), runs the compat guard (`build/check-compat.sh`), builds the updater, and runs the suite serially, since the tests share the build root's target and stage. It hands the staged app and updater to `collect`, and upstream's packed test binaries to `vm-test`.
+- `collect` (Linux) packages through shipyard's stevedore seams (`build/package-pkg.sh`), writes the notes and the declared state, signs on a publishing run or writes a stand-in feed otherwise, and runs artifact conformance with clang22's Linux Mach-O readers.
+- `vm-test` (Linux, Mac OS X 10.9 in `Mavergreen/mavericks-vm`) installs the run's pkg and runs `build/check-release-on-10.9.sh --repo-tests` and upstream's packed test binaries. Neither has a skip path, so anything that cannot run there fails; inside the check, `run-repo-tests.sh` keeps 77 as a skip.
+- `scan`, `publish` and `retry` are shipyard's; `required (release)` is the one check branch protection requires.
+
+No step runs x86_64 code on the arm64 runner, so nothing is translated by Rosetta. A test that executes x86_64 code runs its structural part in `build` and exits 77 at its first x86_64 execution (`tests/support/host.sh`). `run-repo-tests.sh` reports that as a skip, and `--strict-host` would not change that, because those tests declare themselves macOS-only. Their executions need the build root (the prepared source and the pinned rust and clang22), which the 10.9 guest does not have, so in the guest they skip too. Where each x86_64 execution runs:
+
+| Test | `build` (arm64) | `vm-test` (10.9 guest) | Only natively on a 10.9 box |
+|---|---|---|---|
+| `app_stage.sh` | the bundle's identity and resources; the staged executables are the build's | every executable's `--version` and `strip-ansi-escapes`; `wezterm ls-fonts` finding the GUI beside it through the PATH wrapper; the app's terminfo through `infocmp` and `tput` (the release check, installed) | |
+| `byteorder.sh` | compiles the probe | | the libssh byte-order probe |
+| `cli_pty.sh` | | the CLI's and mux server's `--version` and `--help`, `wezterm record` through a real PTY, and a mux PTY round trip (the release check) | |
+| `cocoa_compat.sh` | compiles the availability probe | its eight `window` tests, in upstream's `window` test binary | the Cocoa availability probe; the same tests built with `window`'s own features |
+| `gui_version.sh` | | `wezterm-gui --version` (the release check) | |
+| `local_smoke.sh` | | | `build/check-local.sh --non-gui` |
+| `locale_bootstrap.sh` | | each executable's version with no `LANG`, and the `LANG` a child of `wezterm record` sees (the release check) | |
+| `notification_backend.sh` | no UserNotifications in the graph | its tests, in upstream's `wezterm-toast-notification` test binary | the same tests built with that crate's own features |
+| `render_dependencies.sh` | no Metal in the graph | its `window` and `wezterm-gui` tests, in upstream's test binaries | the same tests built per package |
+| `tls_compat.sh` | no strong import of the optional TLS API; compiles the tests and the server | | the SecureTransport trust, host name, SNI and protocol tests |
+| `upstream_suite.sh` | builds every test binary through the capture runner, and packs them | the 71 binaries, all 428 tests, with the sshd probe guard | the runner's own failure cases; the doctests |
+| `release_check.sh` | | `build/check-release-on-10.9.sh` itself, on the run's pkg, installed for real | the check's failure cases, in a scratch volume |
+
+Every other test runs in `build`: the host-agnostic ones in full, and the macOS-only ones that compile and read Mach-O without running it. In the guest, which has none of the pinned products, git or python3, a test that needs one of them or the build root skips, and `locked_crate.sh`, `notes_url.sh`, `package.sh`, `prepare.sh`, `tools.sh` and `version.sh` run. `package.sh` runs shipyard's `stage_product.sh`, which reads the updater templates beside shipyard's `scripts/`, so `vm-test` copies shipyard's whole tree into the guest rather than `scripts/` alone. The `on-target:build-root-tests` deviation below declares the right-hand column. Nothing in CI runs that column; it runs when the whole suite runs natively on a 10.9 box. CI does not prove the doctests either: they compile at test time, so only cargo runs them.
+
 ## Version form
 
 The version is `YYYYMMDD.HHMMSS-mavericks.N`, for example `20261026.072628-mavericks.1`, and its comparison key is `20261026.072628.1`. The upstream part is the pinned commit's UTC committer time, which `build/derive-upstream-version.sh` copies from `COMMITTED` in `components/wezterm/version` into the gitignored `UPSTREAM_VERSION`. This deviates from ed25519's date-only form on purpose: weekly snapshots of upstream `main` can share a day, and a date alone would give two different commits one version. A native 10.9 build has no git to read the time from the commit, so `COMMITTED` is recorded in the pin beside `SHA256`, taken from the commit itself. `build/check-snapshot-order.sh` (CI only) refuses a `COMMITTED` older than the previous release's, or equal to it with a different `DIGEST`.
@@ -71,9 +100,14 @@ The version is `YYYYMMDD.HHMMSS-mavericks.N`, for example `20261026.072628-maver
 ## Declared state
 
 - upstream: components/wezterm/version
+- rust: components/rust/version
+- clang22: components/clang22/version
+- make: components/make/version
 
 The upstream entry names the pin rather than `UPSTREAM_VERSION`, because the version is derived from that pin by `build/derive-upstream-version.sh`, which names both files.
 
 ## Conformance deviations
 
-- on-target:gui: the mavericks-vm guest has no logged-in Aqua session, so the GUI is not exercised in CI; exit: an on-target GUI smoke that launches the app, reads its rendered pixels, injects keys, resizes it and sees it exit cleanly, once mavericks-vm guarantees a GUI session.
+- macos-runner:release.yml:build: the cross build needs rust-cross and clang22-cross, which the family ships only for macOS, and with them the 10.9 SDK through Longboat; the updater configures with shipyard-cmake, which install@v1 installs only on macOS; and the tests that compile and read Mach-O fixtures use the same toolchain. Exit: Linux-hosted rust-cross and clang22-cross, after which the build, the updater and those tests run on Linux.
+- on-target:build-root-tests: the x86_64 executions in the right-hand column of the table under "CI" need the build root, which only the build host has, and the arm64 build job stops each at its first x86_64 execution rather than run it under Rosetta: the libssh byte-order, Cocoa-availability and SecureTransport probes, `build/check-local.sh --non-gui`, the per-package builds of the `window`, `wezterm-toast-notification` and `wezterm-gui` tests, the doctests, and the failure cases of upstream-tests.py's runner and of the release check. They run natively, in full, on a 10.9 box; everything that checks the installed product runs in vm-test through the release check. Exit: the build job compiles those probes and test binaries and hands them to vm-test beside upstream's, so the guest runs them.
+- on-target:gui: the mavericks-vm guest has no logged-in Aqua session, so the GUI is not exercised in CI, and vm-test excludes the tests in `tests/upstream-exclusions-headless`, which need a WindowServer connection; exit: an on-target GUI smoke that launches the app, reads its rendered pixels, injects keys, resizes it and sees it exit cleanly, once mavericks-vm guarantees a GUI session.

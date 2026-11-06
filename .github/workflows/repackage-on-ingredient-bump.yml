@@ -1,0 +1,21 @@
+name: repackage-on-ingredient-bump
+
+# spec: INGREDIENTS.md "Build ingredients" -- the pins the build is made with. Not components/**:
+#       Longboat builds nothing shipped, components/clang22/linux-sha256 only fetches clang22's Mach-O
+#       readers for Linux, and components/wezterm/ is this product's own upstream; shipyard's
+#       ingredient-pins.sh reads this list for the release notes and does not honour a '!' exclusion.
+on:
+  push:
+    branches: [main]
+    paths:
+      - components/rust/version
+      - components/clang22/version
+      - components/make/version
+
+jobs:
+  repackage:
+    permissions:
+      actions: write
+    uses: Mavergreen/shipyard/.github/workflows/repackage-on-ingredient-bump.yml@v1
+    with:
+      own-upstream-paths: components/wezterm/version

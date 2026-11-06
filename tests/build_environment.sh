@@ -117,9 +117,8 @@ for mode in native cross; do
     if grep -F ENVIRONMENT_RAN "$TEST_ROOT/output" > /dev/null; then fail "the $mode build ran with tools other than the pinned releases"; fi
 done
 pass 'the build refuses to run unless the pinned releases for its mode are installed'
-# spec: INGREDIENTS.md "On-target acceptance" -- the real toolchain needs this host's pinned
-#       products, which a build host has and a 10.9 machine checking an installed release need not;
-#       one installed at another release still fails below
+# spec: INGREDIENTS.md "CI" -- the real toolchain needs this host's pinned products, which a build
+#       host has and the 10.9 guest does not; one installed at another release still fails below
 if ! installed=$(sh "$ROOT/build/tools.sh" check --root "${MAVERGREEN_TOOL_ROOT:-/}" 2>&1); then
     if ! printf '%s\n' "$installed" | grep '^tools: ' | grep -v ', but not installed' | grep . > /dev/null; then
         echo "the pinned products are not installed, so the real toolchain is not checked here: $installed"

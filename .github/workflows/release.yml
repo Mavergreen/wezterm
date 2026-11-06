@@ -1,0 +1,338 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      local_release:
+        description: "Cut a -mavericks.(N+1) repackage of the current upstream"
+        type: boolean
+        default: false
+      reconcile:
+        description: "Set by the nightly reconcile backstop"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# spec: shipyard SKILL.md "Release workflow" -- a run that can publish is alone in its group
+concurrency:
+  group: >-
+    release-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ver:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.full }}
+      publish: ${{ steps.ver.outputs.release }}
+    steps:
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: Mavergreen/shipyard/.github/actions/install@v1
+      - id: ver
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          LOCAL_RELEASE: ${{ inputs.local_release }}
+          RECONCILE: ${{ inputs.reconcile }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          sh build/derive-upstream-version.sh
+          effective_local_release="$LOCAL_RELEASE"
+          [ "$RECONCILE" = true ] && effective_local_release=true
+          mode="$(LOCAL_RELEASE="$effective_local_release" sh "$SHIPYARD_SCRIPTS/release-mode.sh")"
+          out="$(sh build/version.sh "$mode")"
+          full="$(printf '%s\n' "$out" | sed -n 's/^FULL=//p')"
+          rel="$(printf '%s\n' "$out" | sed -n 's/^RELEASE=//p')"
+          [ -n "$full" ] || { echo "::error::version.sh gave no FULL= line: $out"; exit 1; }
+          [ "$GITHUB_REF_NAME" = main ] || rel=no
+          # spec: shipyard SKILL.md "A release is a declared state, not an event" -- a reconcile
+          #       dispatch cuts N+1, so it publishes only while no release carries this tree's state;
+          #       a human local_release=true dispatch stays ungated, since choosing it is the decision
+          if [ "$rel" = yes ] && [ "$RECONCILE" = true ]; then
+            digest="$(sh "$SHIPYARD_SCRIPTS/release-state.sh")"
+            answer="$(sh "$SHIPYARD_SCRIPTS/release-needed.sh" --digest "$digest" --version "$full")"
+            echo "reconcile: release-needed.sh says $answer"
+            case "$answer" in
+              PUBLISH) : ;;
+              *) rel=no ;;
+            esac
+          fi
+          { echo "full=$full"; echo "release=$rel"; } >> "$GITHUB_OUTPUT"
+          echo "version=$full publish=$rel"
+      # spec: INGREDIENTS.md "Version form" -- a snapshot older than the last release, or as old with
+      #       another commit, is never published as a downgrade
+      - name: The pinned snapshot is not older than the previous release's
+        env:
+          FULL: ${{ steps.ver.outputs.full }}
+        run: |
+          set -eu
+          prev="$(sh "$SHIPYARD_SCRIPTS/previous-release-tag.sh" "$FULL")"
+          if [ -z "$prev" ]; then echo "no earlier release to compare with"; exit 0; fi
+          sh build/check-snapshot-order.sh "$prev"
+          echo "$FULL follows $prev"
+
+  build:
+    needs: ver
+    runs-on: macos-26
+    timeout-minutes: 300
+    env:
+      PYTHON: python3
+    steps:
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: Mavergreen/shipyard/.github/actions/install@v1
+      - name: Build out of tree
+        run: echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+      - name: Pin the version the ver job resolved, and the upstream version under it
+        run: |
+          set -eu
+          printf '%s\n' "${{ needs.ver.outputs.version }}" > VERSION
+          sh build/derive-upstream-version.sh
+      - name: Record the pre-build tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
+      - name: Install the pinned Longboat and its 10.9 SDK, then the pinned clang22-cross, rust-cross and make
+        run: |
+          set -eu
+          d="$RUNNER_TEMP/pinned"
+          pin() { tr -d '[:space:]' < "components/$1/version"; }
+          inst() { sudo installer -pkg "$1" -target / || { sudo tail -80 /var/log/install.log; exit 1; }; }
+          lb="$(pin longboat)"
+          p="$(sh "$SHIPYARD_SCRIPTS/fetch-release-pkg.sh" longboat "$lb" "longboat-$lb.pkg" "$d")"
+          inst "$p"
+          sudo /usr/local/mavergreen/longboat/bin/longboat sdk install 10.9
+          cl="$(pin clang22)"
+          p="$(sh "$SHIPYARD_SCRIPTS/fetch-release-pkg.sh" clang-22 "$cl" "mavericks-clang-22-cross-$cl.pkg" "$d")"
+          inst "$p"
+          rs="$(pin rust)"
+          p="$(sh "$SHIPYARD_SCRIPTS/fetch-release-pkg.sh" rust "$rs" "rust-cross-$rs.pkg" "$d")"
+          inst "$p"
+          mk="$(pin make)"
+          p="$(sh "$SHIPYARD_SCRIPTS/fetch-release-pkg.sh" make "$mk" "make-$mk.pkg" "$d")"
+          inst "$p"
+          sh build/tools.sh check --mode cross
+      - name: Cross-build the release for x86_64 10.9 and stage the product bundle
+        run: sh build/build-cross.sh
+      - name: Every Mach-O in the bundle passes the compat guard
+        run: sh build/check-compat.sh
+      - name: The Sparkle updater
+        run: sh build/build-updater.sh --out "$RUNNER_TEMP/out/wezterm-updater.app"
+      # spec: INGREDIENTS.md "CI" -- packaging runs on Linux; the app and updater travel as a tar,
+      #       which keeps their modes and the framework's symlinks, taken before any test restages
+      - name: Pack the staged app and the updater for packaging
+        run: |
+          set -eu
+          stage="$(sh -c 'REPO_ROOT=$PWD; . "$REPO_ROOT/build/lib.sh"; printf "%s\n" "$STAGE_DIR"')"
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/stage.tar" -C "$stage" "Mavericks WezTerm.app" \
+            -C "$RUNNER_TEMP/out" wezterm-updater.app
+      # spec: INGREDIENTS.md "CI" -- serial, since the tests share the build root's target and stage;
+      #       on this arm64 runner each test that runs x86_64 code stops there with 77
+      - name: Tests
+        env:
+          MAVERICKS_TEST_JOBS: "1"
+          WEZTERM_UPDATER_APP: ${{ runner.temp }}/out/wezterm-updater.app
+        run: sh "$SHIPYARD_SCRIPTS/run-repo-tests.sh"
+      # spec: PORT.md "Upstream's own tests" -- tests/upstream_suite.sh packs upstream's test binaries
+      #       before it reaches the x86_64 code it cannot run here; vm-test runs that pack on 10.9
+      - name: Pack upstream's test binaries for the 10.9 guest
+        run: |
+          set -eu
+          evidence="$(sh -c 'REPO_ROOT=$PWD; . "$REPO_ROOT/build/lib.sh"; printf "%s\n" "$EVIDENCE_DIR"')"
+          packed="$evidence/upstream-suite/packed"
+          [ -f "$packed/manifest.jsonl" ] || { echo "::error::tests/upstream_suite.sh left no pack at $packed"; exit 1; }
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/upstream-tests.tar" -C "$packed" .
+      - name: Disk used
+        if: always()
+        run: |
+          df -h "$RUNNER_TEMP" | tail -1
+          du -sh "$RUNNER_TEMP/mm-build" 2>/dev/null || true
+      - uses: actions/upload-artifact@v7
+        with: { name: stage, path: "${{ runner.temp }}/stage.tar" }
+      - uses: actions/upload-artifact@v7
+        with: { name: upstream-tests, path: "${{ runner.temp }}/upstream-tests.tar" }
+      - name: The build must not have written into the source tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
+
+  collect:
+    needs: [ver, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PYTHON: python3
+    steps:
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: Mavergreen/shipyard/.github/actions/install@v1
+      - name: Where this job writes, and the upstream version under the run's
+        run: |
+          set -eu
+          { echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build"; echo "DIST=$RUNNER_TEMP/dist"; } >> "$GITHUB_ENV"
+          sh build/derive-upstream-version.sh
+      - name: Record the pre-package tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
+      - uses: actions/download-artifact@v8
+        with: { name: stage, path: "${{ runner.temp }}/in" }
+      - name: Package the cross-built app and updater
+        run: |
+          set -eu
+          mkdir "$RUNNER_TEMP/stage"
+          tar -xf "$RUNNER_TEMP/in/stage.tar" -C "$RUNNER_TEMP/stage"
+          sh build/package-pkg.sh --app "$RUNNER_TEMP/stage/Mavericks WezTerm.app" \
+            --updater-app "$RUNNER_TEMP/stage/wezterm-updater.app" \
+            --version "${{ needs.ver.outputs.version }}" --out "$DIST"
+      # spec: shipyard SKILL.md "Artifact conformance" -- off macOS, Mach-O is read with clang22's
+      - name: clang22's Mach-O readers for this Linux host
+        run: |
+          set -eu
+          CL="$(sh "$SHIPYARD_SCRIPTS/fetch_clang22.sh" components/clang22)"
+          { echo "LIPO=$CL/bin/llvm-lipo"; echo "OTOOL=$CL/bin/llvm-otool"; echo "NM=$CL/bin/llvm-nm"; echo "STRINGS=$CL/bin/llvm-strings"; } >> "$GITHUB_ENV"
+      - name: Ingredient pins are well declared
+        run: sh "$SHIPYARD_SCRIPTS/check-ingredient-pins.sh"
+      - name: Release notes
+        run: |
+          set -eu
+          V="${{ needs.ver.outputs.version }}"
+          sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "$V" --version "$V" \
+            --product WezTerm --min-os 10.9.5 --out "$DIST/RELEASE_NOTES.md"
+      - name: Record the declared state in the notes
+        run: |
+          set -eu
+          digest="$(sh "$SHIPYARD_SCRIPTS/release-state.sh")"
+          sh "$SHIPYARD_SCRIPTS/release-state-record.sh" --notes-file "$DIST/RELEASE_NOTES.md" --digest "$digest"
+      - name: Sign the pkg and write its feed
+        if: needs.ver.outputs.publish == 'yes'
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          printenv SPARKLE_PRIVATE_KEY | grep -q . || { echo "::error::SPARKLE_PRIVATE_KEY is not visible to this repo"; exit 1; }
+          V="${{ needs.ver.outputs.version }}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$V"
+          sh "$SHIPYARD_SCRIPTS/sign_and_appcast.sh" --product wezterm --feed-dir "$DIST" \
+            --channel-title "WezTerm for Mavericks" --version "$V" --pkg-url "$base/wezterm-$V.pkg" \
+            --notes-file "$DIST/RELEASE_NOTES.md" --pkg "$DIST/wezterm-$V.pkg" --min-os 10.9.5
+      - name: Unsigned stand-in feed (never published)
+        if: needs.ver.outputs.publish != 'yes'
+        run: sh "$SHIPYARD_SCRIPTS/stand-in-feeds.sh" "$DIST" "${{ needs.ver.outputs.version }}"
+      - name: Artifact conformance
+        run: |
+          set -eu
+          facts="$(sh "$SHIPYARD_SCRIPTS/artifact-facts.sh" "$DIST" "${{ needs.ver.outputs.version }}")"
+          printf '%s\n' "$facts" | sh "$SHIPYARD_SCRIPTS/check-artifact-conformance.sh"
+      - name: The feed is an upgrade
+        if: needs.ver.outputs.publish == 'yes'
+        run: |
+          set -eu
+          sh "$SHIPYARD_SCRIPTS/assert_appcast_upgradeable.sh" --appcast "$DIST/wezterm.xml" \
+            --version "${{ needs.ver.outputs.version }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mavergreen-wezterm
+          path: |
+            ${{ runner.temp }}/dist/*.pkg
+            ${{ runner.temp }}/dist/RELEASE_NOTES.md
+            ${{ runner.temp }}/dist/*.xml
+      - name: Packaging must not have written into the source tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
+
+  vm-test:
+    needs: [ver, build, collect]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: Mavergreen/shipyard/.github/actions/install@v1
+      - uses: actions/download-artifact@v8
+        with: { name: mavergreen-wezterm, path: dist }
+      - uses: actions/download-artifact@v8
+        with: { name: upstream-tests, path: "${{ runner.temp }}/in" }
+      # spec: INGREDIENTS.md "CI" -- shipyard's whole tree, not scripts/ alone: stage_product.sh, which
+      #       tests/package.sh runs in the guest, reads the updater templates beside scripts/
+      - name: Bring the checksums, shipyard and upstream's test binaries into the workspace the guest gets
+        run: |
+          set -eu
+          (cd dist && sha256sum wezterm-*.pkg > SHA256SUMS)
+          cp -R "$(dirname "$SHIPYARD_SCRIPTS")" .shipyard
+          [ -f .shipyard/updater/updatecheck.plist.in ] || { echo "::error::no updater templates beside $SHIPYARD_SCRIPTS"; exit 1; }
+          mkdir upstream-tests
+          tar -xf "$RUNNER_TEMP/in/upstream-tests.tar" -C upstream-tests
+          ls dist
+          wc -l < upstream-tests/manifest.jsonl
+      # spec: INGREDIENTS.md "CI" -- the release check and upstream's tests have no skip path, so a 77
+      #       there fails; run-repo-tests.sh, inside the check, keeps 77 as a skip
+      - name: Install the pkg on Mac OS X 10.9, check it, and run the repo's and upstream's tests there
+        uses: Mavergreen/mavericks-vm@v1
+        env:
+          WEZTERM_FULL_VERSION: ${{ needs.ver.outputs.version }}
+        with:
+          image-key: ${{ secrets.MAVERICKS_VM_KEY }}
+          cpu: '4'
+          mem: '8192'
+          # spec: INGREDIENTS.md "CI" -- the guest's shipyard is the action's checkout, with no installed
+          #       version file and no git that runs, so tests/package.sh's base component reads this
+          envs: 'WEZTERM_FULL_VERSION SHIPYARD_VERSION'
+          copyback: false
+          run: |
+            sw_vers
+            sudo -n true || { echo "the guest's user cannot sudo without a password, and installer needs root"; exit 1; }
+            export SHIPYARD_SCRIPTS="$PWD/.shipyard/scripts"
+            sh build/derive-upstream-version.sh
+            bad=0
+            s=0; sh build/check-release-on-10.9.sh --repo-tests "$WEZTERM_FULL_VERSION" || s=$?
+            [ "$s" -eq 0 ] || { echo "build/check-release-on-10.9.sh exited $s"; bad=1; }
+            logs="$(mktemp -d /tmp/upstream-tests.XXXXXX)"
+            # spec: INGREDIENTS.md "Conformance deviations" on-target:gui -- the guest has no
+            #       WindowServer, so the tests that need one are excluded here alone
+            cat tests/upstream-exclusions tests/upstream-exclusions-headless > "$logs/exclusions"
+            s=0; python tests/support/upstream-tests.py run upstream-tests/manifest.jsonl "$logs/exclusions" "$logs" \
+              --ssh-probe wezterm-ssh/test/lib || s=$?
+            if [ "$s" -ne 0 ]; then
+              echo "upstream's tests failed on Mac OS X 10.9 (exit $s)"; bad=1
+              for f in "$logs"/*.log; do
+                grep -q 'FAILED\|panicked' "$f" 2>/dev/null || continue
+                echo "== $f"; tail -40 "$f"
+              done
+            fi
+            exit "$bad"
+
+  scan:
+    needs: [ver, collect]
+    if: always() && needs.ver.outputs.publish == 'yes'
+    permissions: { actions: read, contents: read }
+    uses: Mavergreen/shipyard/.github/workflows/scan-for-key.yml@v1
+    with: { artifact: mavergreen-wezterm }
+    secrets: { SPARKLE_PRIVATE_KEY: "${{ secrets.SPARKLE_PRIVATE_KEY }}" }
+
+  publish:
+    needs: [ver, collect, scan, vm-test]
+    if: needs.ver.outputs.publish == 'yes'
+    permissions: { contents: write }
+    uses: Mavergreen/shipyard/.github/workflows/publish-release.yml@v1
+    with: { version: "${{ needs.ver.outputs.version }}", artifact: mavergreen-wezterm }
+
+  retry:
+    needs: [ver, publish]
+    if: always() && needs.publish.result == 'failure'
+    permissions: { contents: read, actions: write }
+    uses: Mavergreen/shipyard/.github/workflows/retry-release.yml@v1
+    with: { version: "${{ needs.ver.outputs.version }}" }
+
+  required:
+    name: required (release)
+    if: always()
+    needs: [ver, build, collect, vm-test, scan, publish, retry]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Mavergreen/shipyard/.github/actions/required-gate@v1
+        with: { needs: "${{ toJSON(needs) }}" }
