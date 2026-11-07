@@ -26,5 +26,6 @@ grep 'legacy_informal_layer_delegate_allows_window_view_registration .* ok' "$EV
 grep 'opengl_backing_layer_uses_real_calayer_without_metal .* ok' "$EVIDENCE_DIR/cocoa-tests.log"
 grep '^test .*::native_cgl_detaches_layer_backing_before_attaching_its_drawable \.\.\.' "$EVIDENCE_DIR/cocoa-tests.log"
 grep '^test .*::unavailable_accelerated_renderer_returns_the_native_format_error \.\.\.' "$EVIDENCE_DIR/cocoa-tests.log"
-grep 'test result: ok. 8 passed; 0 failed;' "$EVIDENCE_DIR/cocoa-tests.log"
+grep 'new_windows_opt_into_native_full_screen .* ok' "$EVIDENCE_DIR/cocoa-tests.log" || { echo 'FAIL: new windows do not opt into native full screen'; exit 1; }
+grep 'test result: ok. 9 passed; 0 failed;' "$EVIDENCE_DIR/cocoa-tests.log"
 echo 'PASS: missing Cocoa methods take guarded fallbacks; supported native operations remain active'

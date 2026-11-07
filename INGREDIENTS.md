@@ -83,7 +83,7 @@ No step runs x86_64 code on the arm64 runner, so nothing is translated by Rosett
 | `app_stage.sh` | the bundle's identity and resources; the staged executables are the build's | every executable's `--version` and `strip-ansi-escapes`; `wezterm ls-fonts` finding the GUI beside it through the PATH wrapper; the app's terminfo through `infocmp` and `tput` (the release check, installed) | |
 | `byteorder.sh` | compiles the probe | | the libssh byte-order probe |
 | `cli_pty.sh` | | the CLI's and mux server's `--version` and `--help`, `wezterm record` through a real PTY, and a mux PTY round trip (the release check) | |
-| `cocoa_compat.sh` | compiles the availability probe | its eight `window` tests, in upstream's `window` test binary | the Cocoa availability probe; the same tests built with `window`'s own features |
+| `cocoa_compat.sh` | compiles the availability probe | its nine `window` tests, in upstream's `window` test binary | the Cocoa availability probe; the same tests built with `window`'s own features |
 | `gui_version.sh` | | `wezterm-gui --version` (the release check) | |
 | `local_smoke.sh` | | | `build/check-local.sh --non-gui` |
 | `locale_bootstrap.sh` | | each executable's version with no `LANG`, `wezterm ls-fonts` reaching `wezterm-gui` with no `LANG`, and the `LANG` a child of `wezterm record` sees (the release check) | |
@@ -92,7 +92,7 @@ No step runs x86_64 code on the arm64 runner, so nothing is translated by Rosett
 | `record_drain.sh` | compiles the pty read delayer | | `wezterm record` keeping output it reads after the child's exit |
 | `render_dependencies.sh` | no Metal in the graph | its `window` and `wezterm-gui` tests, in upstream's test binaries | the same tests built per package |
 | `tls_compat.sh` | no strong import of the optional TLS API; compiles the tests and the server | | the SecureTransport trust, host name, SNI and protocol tests |
-| `upstream_suite.sh` | builds every test binary through the capture runner, and packs them | the 71 binaries, all 428 tests, with the sshd probe guard | the runner's own failure cases; the doctests |
+| `upstream_suite.sh` | builds every test binary through the capture runner, and packs them | the 71 binaries, all 429 tests, with the sshd probe guard | the runner's own failure cases; the doctests |
 | `release_check.sh` | | `build/check-release-on-10.9.sh` itself, on the run's pkg, installed for real | the check's failure cases, in a scratch volume |
 
 Every other test runs in `build`: the host-agnostic ones in full, and the macOS-only ones that compile and read Mach-O without running it. In the guest, which has none of the pinned products, git or python3, a test that needs one of them or the build root skips, and `locked_crate.sh`, `notes_url.sh`, `package.sh`, `prepare.sh`, `tools.sh` and `version.sh` run. `package.sh` runs shipyard's `stage_product.sh`, which reads the updater templates beside shipyard's `scripts/`, so `vm-test` copies shipyard's whole tree into the guest rather than `scripts/` alone. The `on-target:build-root-tests` deviation below declares the right-hand column. Nothing in CI runs that column; it runs when the whole suite runs natively on a 10.9 box. CI does not prove the doctests either: they compile at test time, so only cargo runs them.

@@ -1,1 +1,2 @@
 window/lib/window os::macos::window::mavericks_compat_view_tests::native_cgl_detaches_layer_backing_before_attaching_its_drawable
+window/lib/window os::macos::window::mavericks_compat_view_tests::new_windows_opt_into_native_full_screen

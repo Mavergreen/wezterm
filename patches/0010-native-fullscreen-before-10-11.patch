@@ -1,0 +1,73 @@
+--- a/window/src/os/macos/window.rs
++++ b/window/src/os/macos/window.rs
+@@ -430,6 +430,28 @@
+     }
+ }
+ 
++/// Before macOS 10.11, toggleFullScreen: does nothing unless the window
++/// opted in with NSWindowCollectionBehaviorFullScreenPrimary; 10.11 and
++/// later give resizable windows that behavior by default.
++const NS_WINDOW_COLLECTION_BEHAVIOR_FULL_SCREEN_PRIMARY: NSUInteger = 1 << 7;
++
++unsafe fn new_ns_window(rect: NSRect, style_mask: NSWindowStyleMask) -> StrongPtr {
++    let window: id = msg_send![get_window_class(), alloc];
++    let window = StrongPtr::new(NSWindow::initWithContentRect_styleMask_backing_defer_(
++        window,
++        rect,
++        style_mask,
++        NSBackingStoreBuffered,
++        NO,
++    ));
++    let behavior: NSUInteger = msg_send![*window, collectionBehavior];
++    let () = msg_send![
++        *window,
++        setCollectionBehavior: behavior | NS_WINDOW_COLLECTION_BEHAVIOR_FULL_SCREEN_PRIMARY
++    ];
++    window
++}
++
+ #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
+ pub struct Window {
+     id: usize,
+@@ -530,14 +552,7 @@
+                 ime_text: String::new(),
+             }));
+ 
+-            let window: id = msg_send![get_window_class(), alloc];
+-            let window = StrongPtr::new(NSWindow::initWithContentRect_styleMask_backing_defer_(
+-                window,
+-                rect,
+-                style_mask,
+-                NSBackingStoreBuffered,
+-                NO,
+-            ));
++            let window = new_ns_window(rect, style_mask);
+ 
+             apply_decorations_to_window(
+                 &window,
+@@ -3600,6 +3615,25 @@
+     }
+ 
+     #[test]
++    fn new_windows_opt_into_native_full_screen() {
++        objc::rc::autoreleasepool(|| unsafe {
++            std::hint::black_box(APPLICATION);
++            let window = new_ns_window(
++                NSRect::new(NSPoint::new(0., 0.), NSSize::new(200., 100.)),
++                NSWindowStyleMask::NSTitledWindowMask | NSWindowStyleMask::NSResizableWindowMask,
++            );
++            let behavior: NSUInteger = msg_send![*window, collectionBehavior];
++            assert_ne!(
++                behavior & (1 << 7),
++                0,
++                "before macOS 10.11, toggleFullScreen: ignores a window without \
++                 NSWindowCollectionBehaviorFullScreenPrimary, so native_macos_fullscreen_mode \
++                 would do nothing"
++            );
++        });
++    }
++
++    #[test]
+     fn opengl_backing_layer_uses_real_calayer_without_metal() {
+         unsafe {
+             std::hint::black_box(APPLICATION);
