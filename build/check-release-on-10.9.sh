@@ -220,7 +220,14 @@ alive() {  # home
 nonce() { od -An -N8 -tx1 /dev/urandom | tr -d ' \n' | tr '0-9a-f' 'g-v'; }
 round_trip() {
     h=$1; set -- --new-window ${2:+--domain-name "$2"}
-    pane=$(cli "$h" spawn "$@" -- /bin/sh "$fixtures/mux-echo.sh") || { echo "spawn failed: $pane"; return 1; }
+    # platform: a fixture shell can kill its server before the server answers the spawn, so a failed
+    #           spawn first gives a dying server 5 seconds to go, and then reports it as dead.
+    pane=$(cli "$h" spawn "$@" -- /bin/sh "$fixtures/mux-echo.sh") || {
+        i=0
+        while [ "$i" -lt 5 ] && alive "$h" > /dev/null; do sleep 1; i=$((i + 1)); done
+        alive "$h" || return 1
+        echo "spawn failed: $pane"; return 1
+    }
     case "$pane" in ''|*[!0-9]*) echo "spawn printed '$pane', not a pane id"; return 1 ;; esac
     n=$(nonce)
     answer=answer:$(printf '%s' "$n" | tr 'A-Za-z' 'N-ZA-Mn-za-m')
