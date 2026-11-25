@@ -1,6 +1,6 @@
 REPO=https://github.com/wezterm/wezterm.git
 REF=main
-DIGEST=e68a8ec27727fbbda15e07f0a0737cd5e16481f6
+DIGEST=7d0eb9685cbee56340ccd17926abdaf286a2f977
 SHA256=bb9e39ed576180832330e72b5e5e89990dddb58092ed32a74e1391838cbbf6cc
 COMMITTED=20261026.072628
 FREETYPE2_REPO=https://github.com/freetype/freetype.git
