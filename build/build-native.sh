@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- builds the Mavericks terminal in the release profile
+# platform: host-agnostic -- builds the Mavericks terminal in the release profile, natively on 10.9 or cross
 #   usage: build-native.sh [--mode native|cross]
 #          Prepares (or verifies) the source, builds the four shipped executables for x86_64 10.9 with
 #          the pinned products for the mode (default native; build-cross.sh passes cross) and stages

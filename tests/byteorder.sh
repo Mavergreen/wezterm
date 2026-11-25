@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- executes libssh fallback conversions on Mavericks
+# platform: host-agnostic -- executes libssh fallback conversions on Mavericks
 set -eu
 ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$ROOT

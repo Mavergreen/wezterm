@@ -37,7 +37,11 @@ if [ "$host" = x86_64-apple-darwin ]; then
 else
     # platform: on a cross host the build script is host code, linked by cargo's host linker, which
     #           the stand-in cc on PATH below would otherwise be
-    linker=CARGO_TARGET_$(printf '%s' "$host" | tr a-z- A-Z_)_LINKER=/usr/bin/clang
+    case "$host" in
+        *-linux-*) hostcc=$(command -v cc) || { echo "no cc on this Linux host to link build scripts with"; exit 77; } ;;
+        *) hostcc=/usr/bin/clang ;;
+    esac
+    linker=CARGO_TARGET_$(printf '%s' "$host" | tr a-z- A-Z_)_LINKER=$hostcc
 fi
 printf '#!/bin/sh\necho "git $*" >> "$STUB_LOG"\nexit 1\n' > "$TEST_ROOT/stub/git"
 printf '#!/bin/sh\necho "cc $*" >> "$STUB_LOG"\nexit 1\n' > "$TEST_ROOT/stub/cc"

@@ -6,4 +6,8 @@ pinned_cargo_or_skip() {
         fail "$1 takes cargo only from the pinned rust: $rust"
     }
     cargo=$rust/bin/cargo
+    # platform: cargo finds rustc on PATH unless RUSTC names it; Linux has no /usr/local/mavergreen/bin
+    #           links, and on a Mac PATH may name another rust
+    RUSTC=$rust/bin/rustc
+    export RUSTC
 }

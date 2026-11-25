@@ -30,6 +30,10 @@ pinned_rust() {
     RUST_BIN=$(sh "$REPO_ROOT/build/tools.sh" tree --root "$TOOL_ROOT" ${1:+--mode "$1"} rust) ||
         fail "install the pinned rust release above (INGREDIENTS.md), then retry; build/tools.sh tree --root $TOOL_ROOT rust"
     RUST_BIN=$RUST_BIN/bin
+    # platform: cargo finds rustc on PATH unless RUSTC names it; Linux has no /usr/local/mavergreen/bin
+    #           links, and on a Mac PATH may name another rust
+    RUSTC=$RUST_BIN/rustc
+    export RUSTC
 }
 own_work_root() {
     if [ -L "$WORK_ROOT" ]; then fail "foreign symlink: $WORK_ROOT"; fi

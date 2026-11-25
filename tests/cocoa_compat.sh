@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- measures missing Mavericks selectors and real guarded behavior
+# platform: host-agnostic -- measures missing Mavericks selectors and real guarded behavior
 set -eu
 ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$ROOT

@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- exercises staged native executables and fail-closed local acceptance
+# platform: host-agnostic -- exercises staged native executables and fail-closed local acceptance
 set -eu
 . "$(dirname "$0")/support/common.sh"
 [ -f "$ROOT/build/check-local.sh" ] || fail 'local acceptance driver is missing'

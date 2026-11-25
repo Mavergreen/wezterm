@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- compiles Mavericks Mach-O probes, executing them only where x86_64 runs natively
+# platform: host-agnostic -- compiles Mavericks Mach-O probes, executing them only on a Mac that runs x86_64 natively
 . "$(dirname "$0")/support/common.sh"
 . "$ROOT/tests/support/host.sh"
 . "$ROOT/build/msc.sh"
@@ -41,6 +41,52 @@ cross_root() {  # cross_root DIR HOST-TRIPLE: the cross products at their pins, 
     stub "$trees/make/bin/make"
     stub "$trees/shipyard/bin/shipyard-cmake"
 }
+linux_root() {  # linux_root DIR: the Linux-hosted products at their pins, as recording stand-ins
+    rm -rf "$1"
+    manifest "$1" rust "$(cat "$ROOT/components/rust/version")"
+    manifest "$1" clang22 "$(cat "$ROOT/components/clang22/version")"
+    trees=$1/usr/local/mavergreen
+    printf '#!/bin/sh\n[ "$1" != -vV ] || printf "rustc 0.0.0\\nhost: x86_64-unknown-linux-gnu\\n"\n' > "$trees/rust/bin/rustc"
+    chmod +x "$trees/rust/bin/rustc"
+    stub "$trees/rust/bin/cargo"
+    for tool in clang clang++ llvm-ar llvm-ranlib llvm-otool llvm-lipo llvm-nm llvm-strings; do
+        stub "$trees/clang22/bin/$tool"
+    done
+}
+cat > "$TEST_ROOT/check-linux.sh" <<'EOF'
+set -eu
+. "$2/expect.sh"
+t=$MAVERGREEN_TOOL_ROOT/usr/local/mavergreen
+expect MODE "$MODE" cross
+expect RUSTC "$RUSTC" "$t/rust/bin/rustc"
+expect AR "$AR" "$t/clang22/bin/llvm-ar"
+expect 'MAKE (the host make)' "$MAKE" "$3/make"
+expect 'CMAKE (the host cmake)' "$CMAKE" "$3/cmake"
+expect 'SDKROOT (the host build scripts must not see a macOS SDK)' "${SDKROOT-unset}" unset
+expect CC_x86_64_apple_darwin "${CC_x86_64_apple_darwin-unset}" "$CC"
+expect CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER "$CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER" "$CXX"
+expect 'host CC_x86_64_unknown_linux_gnu' "${CC_x86_64_unknown_linux_gnu-unset}" cc
+expect 'host CXX_x86_64_unknown_linux_gnu' "${CXX_x86_64_unknown_linux_gnu-unset}" c++
+expect 'host linker' "${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER-unset}" cc
+case ":$PATH:" in
+    *":$t/clang22/bin:"*) echo 'FAIL: the target clang is on PATH, where host tools would find it' >&2; exit 1 ;;
+esac
+"$CC" -c probe.c
+EOF
+linux_root "$TEST_ROOT/linux"
+FIXTURE_LOG=$TEST_ROOT/linux.log
+: > "$FIXTURE_LOG"
+# platform: the Linux host's make and cmake are stand-ins first on PATH, so the case runs on a host with neither
+hostbin=$TEST_ROOT/linux-host-bin
+mkdir -p "$hostbin"
+stub "$hostbin/make"
+stub "$hostbin/cmake"
+assert_run 0 env FIXTURE_LOG="$FIXTURE_LOG" MAVERGREEN_TOOL_ROOT="$TEST_ROOT/linux" WEZTERM_TOOLS_HOST=linux SDKROOT=/hostile \
+    PATH="$hostbin:$PATH" sh "$ROOT/build/environment.sh" --mode cross sh "$TEST_ROOT/check-linux.sh" x86_64-unknown-linux-gnu "$TEST_ROOT" "$hostbin"
+grep -F -x "$TEST_ROOT/linux/usr/local/mavergreen/clang22/bin/clang|$sdk|-target x86_64-apple-macos10.9 -isysroot $sdk -c probe.c" "$FIXTURE_LOG" > /dev/null ||
+    fail "the Linux cross target compiler wrapper did not run clang22's clang; it ran: $(cat "$FIXTURE_LOG")"
+pass "cross mode on Linux: the Linux-hosted rust and clang22 for the 10.9 target, the host's cc and make, no global SDKROOT"
+
 cat > "$TEST_ROOT/check-cross.sh" <<'EOF'
 set -eu
 . "$2/expect.sh"
@@ -87,7 +133,7 @@ for host in aarch64-apple-darwin x86_64-apple-darwin; do
     FIXTURE_LOG=$TEST_ROOT/cross.log
     : > "$FIXTURE_LOG"
     trees=$TEST_ROOT/cross/usr/local/mavergreen
-    assert_run 0 env FIXTURE_LOG="$FIXTURE_LOG" MAVERGREEN_TOOL_ROOT="$TEST_ROOT/cross" SDKROOT=/hostile \
+    assert_run 0 env FIXTURE_LOG="$FIXTURE_LOG" MAVERGREEN_TOOL_ROOT="$TEST_ROOT/cross" WEZTERM_TOOLS_HOST=mac SDKROOT=/hostile \
         CC_x86_64_apple_darwin=/hostile CXX_x86_64_apple_darwin=/hostile HOST_CC=/hostile HOST_CXX=/hostile \
         sh "$ROOT/build/environment.sh" --mode cross sh "$TEST_ROOT/check-cross.sh" "$host" "$TEST_ROOT"
     for compiler in clang:probe.c clang++:probe.cc; do
@@ -110,7 +156,7 @@ for short in clang22 clang22-cross; do
 done
 for mode in native cross; do
     case "$mode" in native) clang=clang22 rust=rust ;; cross) clang=clang22-cross rust=rust-cross ;; esac
-    assert_run 1 env MAVERGREEN_TOOL_ROOT="$TEST_ROOT/stale" sh "$ROOT/build/environment.sh" --mode "$mode" sh -c 'echo ENVIRONMENT_RAN'
+    assert_run 1 env MAVERGREEN_TOOL_ROOT="$TEST_ROOT/stale" WEZTERM_TOOLS_HOST=mac sh "$ROOT/build/environment.sh" --mode "$mode" sh -c 'echo ENVIRONMENT_RAN'
     assert_output "$clang: pinned at $(cat "$ROOT/components/clang22/version"), but 0.0.1 is installed"
     assert_output "$rust: pinned at $(cat "$ROOT/components/rust/version"), but not installed"
     assert_output 'build/tools.sh'
@@ -131,7 +177,7 @@ set -eu
 . "$2/expect.sh"
 trees=${MAVERGREEN_TOOL_ROOT:-/}
 trees=${trees%/}/usr/local/mavergreen
-case "$MODE" in native) rust=rust clang=clang22 ;; cross) rust=rust-cross clang=clang22-cross ;; esac
+case "$MODE:$(uname -s)" in native:*|cross:Linux) rust=rust clang=clang22 ;; cross:*) rust=rust-cross clang=clang22-cross ;; esac
 expect RUSTC "$RUSTC" "$trees/$rust/bin/rustc"
 expect CARGO "$CARGO" "$trees/$rust/bin/cargo"
 expect AR "$AR" "$trees/$clang/bin/llvm-ar"
@@ -140,13 +186,20 @@ expect OTOOL "$OTOOL" "$trees/$clang/bin/llvm-otool"
 expect LIPO "$LIPO" "$trees/$clang/bin/llvm-lipo"
 expect NM "$NM" "$trees/$clang/bin/llvm-nm"
 expect STRINGS "$STRINGS" "$trees/$clang/bin/llvm-strings"
-expect MAKE "$MAKE" "$trees/make/bin/gmake"
-expect CMAKE "$CMAKE" "$trees/shipyard/bin/shipyard-cmake"
+if [ "$(uname -s)" = Linux ]; then
+    hostmake=$(dirname "$(command -v make)")/gmake
+    [ -x "$hostmake" ] || hostmake=$(command -v make)
+    expect 'MAKE (the host make)' "$MAKE" "$hostmake"
+    expect 'CMAKE (the runner cmake)' "$CMAKE" "$(command -v cmake)"
+else
+    expect MAKE "$MAKE" "$trees/make/bin/gmake"
+    expect CMAKE "$CMAKE" "$trees/shipyard/bin/shipyard-cmake"
+fi
 expect CARGO_PROFILE_RELEASE_DEBUG "${CARGO_PROFILE_RELEASE_DEBUG-unset}" 0
 expect CARGO_INCREMENTAL "${CARGO_INCREMENTAL-unset}" 0
 expect 'cargo on PATH' "$(command -v cargo)" "$CARGO"
 expect 'rustc on PATH' "$(command -v rustc)" "$RUSTC"
-expect 'make on PATH' "$(command -v make)" "$trees/make/bin/make"
+[ "$(uname -s)" = Linux ] || expect 'make on PATH' "$(command -v make)" "$trees/make/bin/make"
 if [ "$MODE" = native ]; then
     expect 'clang on PATH' "$(command -v clang)" "$trees/clang22/bin/clang"
     expect SDKROOT "$SDKROOT" "$3"
@@ -177,5 +230,5 @@ if [ "$run" = run ]; then
     assert_output 'RUST_TARGET_OK'
     pass 'C, C++ and Rust execute from the pinned products and record Mavericks floor and SDK'
 else
-    pass "C, C++ and Rust from the pinned products record Mavericks floor and SDK (not executed: this $(uname -m) host does not run x86_64 natively)"
+    pass "C, C++ and Rust from the pinned products record Mavericks floor and SDK (not executed: this $(uname -s) $(uname -m) host does not run them natively)"
 fi

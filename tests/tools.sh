@@ -4,13 +4,15 @@
 tools=$ROOT/build/tools.sh
 [ -f "$tools" ] || fail 'build/tools.sh check is not implemented'
 pin() { cat "$ROOT/components/${1%-cross}/version"; }
-for component in rust clang22 make longboat; do
+for component in rust clang22 make; do
     [ -f "$ROOT/components/$component/version" ] || fail "components/$component/version is not pinned"
     case "$(pin "$component")" in
         *[!0-9A-Za-z.-]*|'') fail "components/$component/version must hold one release tag" ;;
     esac
 done
 pass 'every measured build tool is pinned to one release tag'
+WEZTERM_TOOLS_HOST=mac
+export WEZTERM_TOOLS_HOST
 
 manifest() {
     mkdir -p "$1/usr/local/mavergreen/$2"
@@ -28,6 +30,11 @@ pass 'native passes with exactly rust, clang22 and make at their pins'
 installed rust-cross clang22-cross make
 assert_run 0 sh "$tools" check --root "$TEST_ROOT/root/" --mode cross
 pass 'cross passes with exactly rust-cross, clang22-cross and make at their pins'
+
+installed rust clang22
+assert_run 0 env WEZTERM_TOOLS_HOST=linux sh "$tools" check --root "$TEST_ROOT/root" --mode cross
+assert_run 1 sh "$tools" check --root "$TEST_ROOT/root" --mode cross
+pass 'cross on Linux passes with exactly the Linux-hosted rust and clang22 at their pins, and needs no make'
 
 for mode in native cross; do
     case "$mode" in native) set -- rust clang22 make ;; cross) set -- rust-cross clang22-cross make ;; esac

@@ -5,7 +5,10 @@
 #          Each family product the build runs must be installed at exactly the release its pin names,
 #          read from <DIR>/usr/local/mavergreen/<short>/mavergreen.plist (DIR defaults to /, the mode to
 #          this host's). A release's native and cross products share one pin: rust and rust-cross read
-#          components/rust/version, clang22 and clang22-cross components/clang22/version. Reports every
+#          components/rust/version, clang22 and clang22-cross components/clang22/version. A Linux host
+#          builds cross with the Linux-hosted rust and clang22 (install-products.sh installs each from its
+#          linux-x86_64 archive under the same names) and the host's own make; WEZTERM_TOOLS_HOST (linux
+#          or mac) replaces uname -s. Reports every
 #          mismatch, then exits 1; exits 2 on a usage error. tree checks only the product COMPONENT
 #          (rust, clang22 or make) names in that mode and, when it is at its pin, prints its tree,
 #          <DIR>/usr/local/mavergreen/<short>.
@@ -35,7 +38,11 @@ if [ -z "$mode" ]; then
 fi
 case "$mode" in
     native) products='rust:rust clang22:clang22 make:make' ;;
-    cross) products='rust-cross:rust clang22-cross:clang22 make:make' ;;
+    cross)
+        case "${WEZTERM_TOOLS_HOST:-$(uname -s)}" in
+            linux|Linux) products='rust:rust clang22:clang22' ;;
+            *) products='rust-cross:rust clang22-cross:clang22 make:make' ;;
+        esac ;;
     *) usage ;;
 esac
 if [ "$action" = tree ]; then

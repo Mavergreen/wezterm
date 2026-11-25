@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- checks the actual GUI startup identity before parsing
+# platform: host-agnostic -- checks the actual GUI startup identity before parsing
 set -eu
 ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$ROOT

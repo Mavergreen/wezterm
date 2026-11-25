@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- links fixture Mach-O files with the pinned clang22 and reads the staged app
+# platform: host-agnostic -- links fixture Mach-O files with the pinned clang22 and reads the staged app
 #   usage: sh tests/cxx_runtime.sh
 #          The shipped executables carry no C++ runtime: none loads a libc++, libc++abi or libstdc++,
 #          and none defines or imports the runtime's symbols, so there is neither a second static copy

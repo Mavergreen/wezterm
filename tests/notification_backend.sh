@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- tests the selected native notification backend
+# platform: host-agnostic -- tests the selected native notification backend
 set -eu
 ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$ROOT

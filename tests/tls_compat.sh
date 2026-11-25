@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- tests native SecureTransport resolution and local trust
+# platform: host-agnostic -- tests native SecureTransport resolution and local trust
 set -eu
 ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$ROOT

@@ -101,7 +101,10 @@ check_pkg() {  # pkg version app
     rm -rf "$TEST_ROOT/x" "$TEST_ROOT/root"
     "$STEVEDORE" expand "$pkg" "$TEST_ROOT/x" > /dev/null || fail "stevedore cannot expand $pkg"
     mkdir "$TEST_ROOT/root"
-    for c in "$TEST_ROOT/x"/*.pkg; do tar -xf "$c/Payload" -C "$TEST_ROOT/root" || fail "cannot read $c/Payload"; done
+    # platform: a Payload is gzipped cpio, which bsdtar reads and GNU tar does not; pkg_read.sh reads it on any host
+    for c in dev.mavergreen.base "$id"; do
+        sh "$SHIPYARD_SCRIPTS/pkg_read.sh" payload "$TEST_ROOT/x" "$c" "$TEST_ROOT/root" || fail "cannot read $c's Payload"
+    done
     r=$TEST_ROOT/root
     m=$r/usr/local/mavergreen/$short/mavergreen.plist
     [ "$("$STEVEDORE" plist get "$m" version)" = "$v" ] || fail "the manifest's version is not $v"

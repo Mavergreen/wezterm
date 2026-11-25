@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- reads the native release build's cargo messages and receipts
+# platform: host-agnostic -- reads the native release build's cargo messages and receipts
 set -eu
 . "$(dirname "$0")/support/common.sh"
 REPO_ROOT=$ROOT

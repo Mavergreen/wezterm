@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- cross-builds the Mavericks terminal on a modern macOS host
+# platform: host-agnostic -- cross-builds the Mavericks terminal on a modern Mac or x86_64 Linux
 #   usage: build-cross.sh
 #          build-native.sh --mode cross: rust-cross and clang22-cross build the same release for
 #          x86_64 10.9 from the same prepared source, and stage the same product bundle.

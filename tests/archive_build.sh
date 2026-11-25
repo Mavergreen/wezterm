@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- compiles native font dependencies without external git
+# platform: host-agnostic -- compiles native font dependencies without external git
 set -eu
 ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$ROOT

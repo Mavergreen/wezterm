@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- runs the release executables with no LANG, as Finder, launchd and ssh start them
+# platform: host-agnostic -- runs the release executables with no LANG, as Finder, launchd and ssh start them
 set -eu
 . "$(dirname "$0")/support/common.sh"
 REPO_ROOT=$ROOT

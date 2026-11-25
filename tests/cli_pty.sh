@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- executes the newly built CLI and a real shell PTY
+# platform: host-agnostic -- executes the newly built CLI and a real shell PTY
 set -eu
 ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$ROOT

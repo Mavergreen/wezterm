@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- daemonizes the newly built mux server and reads its forked child's wait status
+# platform: host-agnostic -- daemonizes the newly built mux server and reads its forked child's wait status
 set -eu
 . "$(dirname "$0")/support/common.sh"
 REPO_ROOT=$ROOT

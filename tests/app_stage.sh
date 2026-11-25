@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- checks bundle identity, resources and staged executables
+# platform: host-agnostic -- checks bundle identity, resources and staged executables
 set -eu
 . "$(dirname "$0")/support/common.sh"
 REPO_ROOT=$ROOT

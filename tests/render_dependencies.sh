@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- verifies no-Metal rendering and native color behavior
+# platform: host-agnostic -- verifies no-Metal rendering and native color behavior
 set -eu
 ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$ROOT

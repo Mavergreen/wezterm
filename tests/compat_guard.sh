@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- links fixture Mach-O files with the pinned clang22 and reads the staged app
+# platform: host-agnostic -- links fixture Mach-O files with the pinned clang22 and reads the staged app
 set -eu
 . "$(dirname "$0")/support/common.sh"
 REPO_ROOT=$ROOT

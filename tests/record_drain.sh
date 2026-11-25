@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- records children that exit as soon as they have written, with the newly built CLI
+# platform: host-agnostic -- records children that exit as soon as they have written, with the newly built CLI
 set -eu
 . "$(dirname "$0")/support/common.sh"
 REPO_ROOT=$ROOT

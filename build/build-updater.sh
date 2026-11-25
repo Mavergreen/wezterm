@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- verifies the prepared source the updater's icon comes from, which a Mac prepares
+# platform: host-agnostic -- clang22 cross-builds the updater on 10.9, a modern Mac or Linux
 #   usage: build-updater.sh --out APP
 #          Builds the Sparkle updater (CMakeLists.txt), x86_64 for 10.9 only, with the clang22 release
 #          components/clang22 pins (shipyard's fetch_clang22.sh) and shipyard's MavericksToolchain.cmake,
@@ -25,7 +25,10 @@ NM=$CL/bin/llvm-nm
 STRINGS=$CL/bin/llvm-strings
 export LIPO OTOOL NM STRINGS
 cmake=$(command -v shipyard-cmake || echo /usr/local/mavergreen/bin/shipyard-cmake)
-[ -x "$cmake" ] || fail 'no shipyard-cmake; install the shipyard pkg'
+# platform: install@v1 installs no shipyard pkg on Linux; the runner's cmake finds MavericksShipyard
+#           through the MavericksShipyard_DIR it exports
+[ "$(uname -s)" != Linux ] || cmake=$(command -v cmake || echo /usr/bin/cmake)
+[ -x "$cmake" ] || fail "no $cmake: install the shipyard pkg (on Linux, cmake)"
 work=$(mktemp -d "$WORK_ROOT/updater.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 # spec: claude-plugins/mavergreen/skills/mavergreen-conventions/SKILL.md "Sparkle updater" -- one

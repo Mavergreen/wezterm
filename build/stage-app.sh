@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- stages the actual native product without installing it
+# platform: host-agnostic -- stages the actual native product without installing it
 #   usage: stage-app.sh [--acceptance]
 #          Stages "Mavericks WezTerm.app" from the release build: the product bundle, or with
 #          --acceptance the private bundle for GUI acceptance, which differs only by declaring no
@@ -59,6 +59,16 @@ cp -p "$SOURCE_DIR/assets/shell-integration/"* "$new/Contents/Resources/"
 cp -p "$SOURCE_DIR/LICENSE.md" "$new/Contents/Resources/LICENSE.md"
 cp -R "$SOURCE_DIR/assets/shell-completion" "$new/Contents/Resources/shell-completion"
 /usr/bin/tic -x -e wezterm -o "$new/Contents/Resources/terminfo" "$SOURCE_DIR/termwiz/data/wezterm.terminfo"
+# platform: ncurses built for a case-sensitive file system (Linux) names each directory by the entry's
+#           first letter (w/); Apple's, 10.9's included, by that letter's hex code (77/)
+for dir in "$new/Contents/Resources/terminfo"/?; do
+    [ -d "$dir" ] || continue
+    mv "$dir" "$new/Contents/Resources/terminfo/$(printf '%s' "${dir##*/}" | od -An -tx1 | tr -d ' \n')"
+done
+for entry in "$new/Contents/Resources/terminfo"/*/*; do
+    # platform: ncurses before 6.1, 10.9's included, reads only the legacy terminfo magic, octal 0432
+    [ "$(od -An -tx1 -N2 "$entry" | tr -d ' \n')" = 1a01 ] || fail "$entry is not in the legacy terminfo format 10.9 reads"
+done
 version=$(tr -d '\n' < "$SOURCE_DIR/.tag")
 "$PYTHON" - "$new/Contents/Info.plist" "$version" "$(comparison_key "$version")" "$flavour" <<'PY'
 import plistlib, sys

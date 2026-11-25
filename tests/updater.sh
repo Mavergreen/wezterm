@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- builds the Sparkle updater with clang22 and reads the bundle with llvm-otool
+# platform: host-agnostic -- builds the Sparkle updater with clang22 and reads the bundle with llvm-otool
 set -eu
 . "$(dirname "$0")/support/common.sh"
 REPO_ROOT=$ROOT
@@ -17,6 +17,9 @@ mkdir "$TEST_ROOT/taken.app"
 assert_run 1 sh "$ROOT/build/build-updater.sh" --out "$TEST_ROOT/taken.app"
 assert_output 'already exists'
 cmake=$(command -v shipyard-cmake || echo /usr/local/mavergreen/bin/shipyard-cmake)
+# platform: install@v1 installs no shipyard pkg on Linux; the runner's cmake finds MavericksShipyard
+#           through the MavericksShipyard_DIR it exports
+[ "$(uname -s)" != Linux ] || cmake=$(command -v cmake || echo /usr/bin/cmake)
 assert_run 1 "$cmake" -S "$ROOT" -B "$TEST_ROOT/unprepared" -DWEZTERM_PREPARED_SOURCE="$TEST_ROOT/nowhere"
 # platform: CMake wraps a message's lines and normalises the path, so its pieces are matched apart
 assert_output 'no prepared WezTerm source at'

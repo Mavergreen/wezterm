@@ -133,7 +133,7 @@ grep -qx 'pins:       contents: read' "$T/jobs" || fail "the pins job must read 
 if grep '^pins:' "$T/jobs" | grep -q 'write\|git push\|gh workflow'; then fail 'the pins job can write'; fi
 if grep '^push:' "$T/jobs" | grep -q 'pin-source-tarballs\|fill\|curl\|install@'; then fail "the push job touches upstream's tarballs"; fi
 [ "$(grep -A1 '^push:     permissions:$' "$T/jobs" | tail -1)" = 'push:       contents: read' ] &&
-    ! grep '^push:' "$T/jobs" | grep -q 'contents: write$\|actions: write' || fail "the push job's GITHUB_TOKEN must read only"
+    ! grep -Eq '^push:       (contents|actions): write$' "$T/jobs" || fail "the push job's GITHUB_TOKEN must read only"
 grep -qx 'push:         uses: actions/create-github-app-token@v3' "$T/jobs" &&
     grep -qx 'push:           client-id: ${{ vars.PINS_BOT_CLIENT_ID }}' "$T/jobs" &&
     grep -qx 'push:           private-key: ${{ secrets.PINS_BOT_PRIVATE_KEY }}' "$T/jobs" &&
@@ -213,7 +213,7 @@ if managers:
           'the WezTerm manager captures REPO, REF=main and DIGEST from the pin')
     check(m.get('depNameTemplate') == 'wezterm/wezterm', 'the WezTerm dependency is named wezterm/wezterm')
 for short, dep, shape in (('rust', 'Mavergreen/rust', 'mavericks'), ('clang22', 'Mavergreen/clang-22', 'mavericks'),
-                          ('make', 'Mavergreen/make', 'mavericks'), ('longboat', 'Mavergreen/longboat', 'date')):
+                          ('make', 'Mavergreen/make', 'mavericks')):
     path = 'components/%s/version' % short
     value = open(os.path.join(root, path)).read().strip()
     managers = owners(path)

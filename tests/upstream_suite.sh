@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- runs upstream's own cargo tests natively, reusing the release build
+# platform: host-agnostic -- runs upstream's own cargo tests natively, reusing the release build
 . "$(CDPATH= cd "$(dirname "$0")" && pwd)/support/common.sh"
 REPO_ROOT=$ROOT
 . "$ROOT/build/lib.sh"

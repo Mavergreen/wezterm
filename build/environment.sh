@@ -1,11 +1,13 @@
 #!/bin/sh
-# platform: macOS-only -- selects Mavericks compiler, SDK and target tools
+# platform: host-agnostic -- selects Mavericks compiler, SDK and target tools on 10.9, a modern Mac or Linux
 #   usage: environment.sh [--mode native|cross] COMMAND [ARG...]
 #          Runs COMMAND with the pinned products for the mode (default: this host's, as shipyard's
 #          mavericks_mode.sh says). native: rust, clang22 and the 10.9 SDK for everything.
-#          cross: rust-cross and clang22-cross build the x86_64 10.9 target; build scripts and proc
-#          macros build for the host with the runner's /usr/bin/clang and its own SDK, so SDKROOT is
-#          set only inside the target compiler wrappers.
+#          cross: the cross products (build/tools.sh: rust-cross and clang22-cross on a Mac, the
+#          Linux-hosted rust and clang22 on Linux) build the x86_64 10.9 target; build scripts and proc
+#          macros build for the host with its own compiler (a Mac's /usr/bin/clang and its SDK, Linux's
+#          cc), so SDKROOT is set only inside the target compiler wrappers. WEZTERM_TOOLS_HOST (linux or
+#          mac) replaces uname -s, as for build/tools.sh.
 set -eu
 REPO_ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 . "$REPO_ROOT/build/lib.sh"
@@ -27,13 +29,23 @@ SDK=$(sh "$SHIPYARD_SCRIPTS/fetch_sdk.sh" --arch x86_64)
 MACOSX_DEPLOYMENT_TARGET=10.9
 pinned_rust "$MODE"
 CLANG_BIN=$(sh "$REPO_ROOT/build/tools.sh" tree --root "$TOOL_ROOT" --mode "$MODE" clang22)/bin
-MAKE_BIN=$(sh "$REPO_ROOT/build/tools.sh" tree --root "$TOOL_ROOT" --mode "$MODE" make)/bin
+case "${WEZTERM_TOOLS_HOST:-$(uname -s)}" in linux|Linux) on_linux=1 ;; *) on_linux=0 ;; esac
+if [ "$on_linux" = 1 ]; then
+    # platform: the family's make ships only as a Mac pkg; a Linux runner's make is GNU make already
+    MAKE_BIN=$(dirname "$(command -v make)")
+else
+    MAKE_BIN=$(sh "$REPO_ROOT/build/tools.sh" tree --root "$TOOL_ROOT" --mode "$MODE" make)/bin
+fi
 RUSTC=$RUST_BIN/rustc
 CARGO=$RUST_BIN/cargo
 AR=$CLANG_BIN/llvm-ar
 RANLIB=$CLANG_BIN/llvm-ranlib
 MAKE=$MAKE_BIN/gmake
+[ -x "$MAKE" ] || MAKE=$MAKE_BIN/make
 CMAKE=$TREES/shipyard/bin/shipyard-cmake
+# platform: install@v1 installs no shipyard pkg on Linux; the runner's cmake finds MavericksShipyard
+#           through the MavericksShipyard_DIR it exports
+[ "$on_linux" = 0 ] || CMAKE=$(command -v cmake || echo /usr/bin/cmake)
 OTOOL=$CLANG_BIN/llvm-otool
 LIPO=$CLANG_BIN/llvm-lipo
 NM=$CLANG_BIN/llvm-nm
@@ -86,7 +98,18 @@ else
             eval "CC_$host_cc=\$HOST_CC CXX_$host_cc=\$HOST_CXX $host_linker=\$HOST_CC"
             export HOST_CC HOST_CXX "CC_$host_cc" "CXX_$host_cc" "$host_linker"
             ;;
-        *) fail "cross mode needs a macOS host; $RUSTC -vV says host: $host" ;;
+        x86_64-unknown-linux-gnu)
+            # platform: build scripts and proc macros for a Linux host build with its own cc; the
+            #           exported CC is the target's wrapper, so the host's compiler is named per triple
+            HOST_CC=cc
+            HOST_CXX=c++
+            CC_x86_64_unknown_linux_gnu=$HOST_CC
+            CXX_x86_64_unknown_linux_gnu=$HOST_CXX
+            CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=$HOST_CC
+            export HOST_CC HOST_CXX CC_x86_64_unknown_linux_gnu CXX_x86_64_unknown_linux_gnu
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER
+            ;;
+        *) fail "cross mode needs a macOS or x86_64 Linux host; $RUSTC -vV says host: $host" ;;
     esac
     PATH=$RUST_BIN:$MAKE_BIN:$PATH
 fi

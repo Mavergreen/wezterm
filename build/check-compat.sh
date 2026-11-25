@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- reads Mach-O files with the pinned clang22 tree under /usr/local/mavergreen
+# platform: host-agnostic -- reads Mach-O files with the pinned clang22 tree under /usr/local/mavergreen
 #   usage: check-compat.sh [--app APP | MACHO...]
 #          Runs shipyard's assert_binary_compatible.sh on each MACHO named or, with none, on every
 #          Mach-O file inside APP (default: the staged "Mavericks WezTerm.app"). The guard reads them

@@ -80,7 +80,7 @@ jobs:
 
   build:
     needs: ver
-    runs-on: macos-26
+    runs-on: ubuntu-latest
     timeout-minutes: 300
     env:
       PYTHON: python3
@@ -97,25 +97,13 @@ jobs:
           sh build/derive-upstream-version.sh
       - name: Record the pre-build tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
-      - name: Install the pinned Longboat and its 10.9 SDK, then the pinned clang22-cross, rust-cross and make
+      # spec: INGREDIENTS.md "Build tools" -- rust and clang22 install from their linux-x86_64 archives
+      #       at the pins; environment.sh fetches the pinned 10.9 SDK itself, and make is the runner's
+      - name: Install the pinned Linux-hosted rust and clang22
         run: |
           set -eu
-          d="$RUNNER_TEMP/pinned"
           pin() { tr -d '[:space:]' < "components/$1/version"; }
-          inst() { sudo installer -pkg "$1" -target / || { sudo tail -80 /var/log/install.log; exit 1; }; }
-          lb="$(pin longboat)"
-          p="$(sh "$SHIPYARD_SCRIPTS/fetch-release-pkg.sh" longboat "$lb" "longboat-$lb.pkg" "$d")"
-          inst "$p"
-          sudo /usr/local/mavergreen/longboat/bin/longboat sdk install 10.9
-          cl="$(pin clang22)"
-          p="$(sh "$SHIPYARD_SCRIPTS/fetch-release-pkg.sh" clang-22 "$cl" "mavericks-clang-22-cross-$cl.pkg" "$d")"
-          inst "$p"
-          rs="$(pin rust)"
-          p="$(sh "$SHIPYARD_SCRIPTS/fetch-release-pkg.sh" rust "$rs" "rust-cross-$rs.pkg" "$d")"
-          inst "$p"
-          mk="$(pin make)"
-          p="$(sh "$SHIPYARD_SCRIPTS/fetch-release-pkg.sh" make "$mk" "make-$mk.pkg" "$d")"
-          inst "$p"
+          sh "$SHIPYARD_SCRIPTS/install-products.sh" "rust@$(pin rust)" "clang22@$(pin clang22)"
           sh build/tools.sh check --mode cross
       - name: Cross-build the release for x86_64 10.9 and stage the product bundle
         run: sh build/build-cross.sh
@@ -132,7 +120,7 @@ jobs:
           COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/stage.tar" -C "$stage" "Mavericks WezTerm.app" \
             -C "$RUNNER_TEMP/out" wezterm-updater.app
       # spec: INGREDIENTS.md "CI" -- serial, since the tests share the build root's target and stage;
-      #       on this arm64 runner each test that runs x86_64 code stops there with 77
+      #       on this Linux runner each test that runs x86_64 code stops there with 77
       - name: Tests
         env:
           MAVERICKS_TEST_JOBS: "1"
