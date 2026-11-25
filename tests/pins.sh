@@ -25,7 +25,7 @@ F
 commit() {
     repo=$1; shift
     (cd "$repo" && GIT_AUTHOR_DATE='2001-01-01T00:00:00+0000' GIT_COMMITTER_DATE="$1" \
-        git -c user.name=t -c user.email=t@t commit -q -m "$2")
+        git -c user.name=t -c user.email=t@t commit -q -m "$2") || exit 1
     git -C "$repo" rev-parse HEAD
 }
 gitlink() { git -C "$1" update-index --add --cacheinfo 160000 "$2" "$3"; }
@@ -174,7 +174,7 @@ pass 'a fetch failure exits 1 and writes nothing, though earlier rows moved'
 retar() {  # retar OWNER NAME COMMIT 'shell command': that tarball, changed by the command run in its tree
     rm -rf "$T/fake"; mkdir -p "$T/fake"
     gzip -dc "$T/codeload/$1/$2/tar.gz/$3" | tar xf - -C "$T/fake"
-    (cd "$T/fake"/*/ && eval "$4")
+    (cd "$T/fake"/*/ && eval "$4") || exit 1
     (cd "$T/fake" && tar cf - ./* | gzip -n > "$T/codeload/$1/$2/tar.gz/$3")
 }
 cp "$T/codeload/wezterm/wezterm/tar.gz/$WZ2" "$T/wz.tar.gz"

@@ -81,7 +81,7 @@ XDG_CACHE_HOME=$HOME/cache
 XDG_CONFIG_HOME=$HOME/config
 XDG_DATA_HOME=$HOME/data
 export HOME XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME
-(cd / && "$app/Contents/MacOS/wezterm" --skip-config ls-fonts) > "$EVIDENCE_DIR/staged-sibling-gui.txt"
+(cd / && "$app/Contents/MacOS/wezterm" --skip-config ls-fonts) > "$EVIDENCE_DIR/staged-sibling-gui.txt" || exit 1
 grep -F 'Primary font:' "$EVIDENCE_DIR/staged-sibling-gui.txt"
 /usr/bin/infocmp -A "$app/Contents/Resources/terminfo" wezterm > "$EVIDENCE_DIR/staged-terminfo.txt"
 for name in wezterm-gui wezterm wezterm-mux-server; do

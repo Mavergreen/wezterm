@@ -36,7 +36,7 @@ SOURCE_DATE_EPOCH=1761463588
 export SOURCE_DATE_EPOCH
 dist=$TEST_ROOT/dist
 assert_run 0 sh "$ROOT/build/package-pkg.sh" --app "$app" --updater-app "$updater" --version "$V" --out "$dist"
-(cd "$dist" && shasum -a 256 "wezterm-$V.pkg") > "$dist/SHA256SUMS"
+(cd "$dist" && shasum -a 256 "wezterm-$V.pkg") > "$dist/SHA256SUMS" || exit 1
 
 # platform: lays each component's payload into the scratch volume and runs its scripts with that volume
 #           as Installer's target, base first as the Distribution orders them; the bin/ wrappers name
@@ -139,7 +139,7 @@ assert_output 'not installing a pkg that did not verify'
 other=$TEST_ROOT/other
 mkdir "$other"
 cp "$dist/wezterm-$V.pkg" "$other/wezterm-$V.9.pkg"
-(cd "$other" && shasum -a 256 "wezterm-$V.9.pkg") > "$other/SHA256SUMS"
+(cd "$other" && shasum -a 256 "wezterm-$V.9.pkg") > "$other/SHA256SUMS" || exit 1
 INSTALLER_BREAK=nolang run 1 "$other" "$V.9"
 assert_output 'FAIL manifest'
 assert_output "says version $V, not $V.9"
